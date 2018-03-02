@@ -1,2 +1,2 @@
 # backends
-A package that support multiple backends( MongoDB, DynamoDB )
+A package that supports multiple backends( MongoDB, DynamoDB )
