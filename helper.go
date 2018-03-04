@@ -42,19 +42,19 @@ func interfaceToMap(object interface{}) (*map[string]interface{}, error) {
 }
 
 // mapToInterface converts map to interface{} type
-func mapToInterface(object interface{}) (interface{}, error) {
-	var result interface{}
+func mapToInterface(object interface{}, result interface{}) error {
+
 	jsonStruct, err := json.Marshal(object)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	json.Unmarshal(jsonStruct, &result)
+	json.Unmarshal(jsonStruct, result)
 
-	return result, nil
+	return nil
 }
 
-// stringToObjectID convert string to bson.ObjectId
+// stringToObjectID converts _id key from string to bson.ObjectId
 func stringToObjectID(object map[string]interface{}) {
 	if id, ok := object["_id"]; ok {
 		if reflect.TypeOf(id).String() != "bson.ObjectId" {

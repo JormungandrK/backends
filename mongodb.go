@@ -31,7 +31,7 @@ func init() {
 				collection,
 				indexes,
 				collectionInfo["enableTTL"].(bool),
-				collectionInfo["TTL"].(int),
+				collectionInfo["TTL"].(float64),
 			)
 			if err != nil {
 				return nil, err
@@ -71,7 +71,7 @@ func NewSession(Host string, Username string, Password string, Database string) 
 }
 
 // PrepareDB ensure presence of persistent and immutable data in the DB.
-func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL int) (*mgo.Collection, error) {
+func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL float64) (*mgo.Collection, error) {
 	// Create collection
 	collection := session.DB(db).C(dbCollection)
 
@@ -125,7 +125,7 @@ func (c *MongoCollection) GetOne(filter map[string]interface{}, result interface
 	}
 
 	record["id"] = record["_id"].(bson.ObjectId).Hex()
-	result, err = mapToInterface(record)
+	err = mapToInterface(&record, &result)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -134,11 +134,16 @@ func (c *MongoCollection) GetOne(filter map[string]interface{}, result interface
 }
 
 // GetAll fetches all matched records for given filter
-func (c *MongoCollection) GetAll(filter map[string]interface{}, order string, limit int, offset int) (interface{}, error) {
+func (c *MongoCollection) GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error {
+
+	var records []map[string]interface{}
 
 	stringToObjectID(filter)
 	query := c.Find(filter)
 	if order != "" {
+		if sorting == "desc" {
+			order = "-" + order
+		}
 		query = query.Sort(order)
 	}
 	if offset != 0 {
@@ -148,20 +153,31 @@ func (c *MongoCollection) GetAll(filter map[string]interface{}, order string, li
 		query = query.Limit(limit)
 	}
 
-	var results []map[string]interface{}
-	err := query.All(&results)
+	err := query.All(&records)
 	if err != nil {
 		if err == mgo.ErrNotFound {
-			return nil, goa.ErrNotFound(err)
+			return goa.ErrNotFound(err)
 		}
-		return nil, goa.ErrInternal(err)
+		return goa.ErrInternal(err)
 	}
 
-	return results, nil
+	for index, v := range records {
+		v["id"] = v["_id"].(bson.ObjectId).Hex()
+		records[index] = v
+	}
+
+	err = mapToInterface(&records, &results)
+	if err != nil {
+		return goa.ErrInternal(err)
+	}
+
+	return nil
 }
 
 // Save creates new record unless it does not exist, otherwise it updates the record
 func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}) (interface{}, error) {
+
+	var result interface{}
 
 	if filter == nil {
 		payload, err := interfaceToMap(object)
@@ -181,29 +197,12 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 		}
 
 		(*payload)["id"] = id.Hex()
-		result, err := mapToInterface(payload)
+		err = mapToInterface(payload, &result)
 		if err != nil {
 			return nil, goa.ErrInternal(err)
 		}
 
 		return result, nil
-
-		// filter1 := map[string]interface{}{
-		// 	"email": bson.RegEx{"^" + "keitaro", ""},
-		// }
-		// results, err := c.GetAll(&filter1, "", 0, 0)
-		// if err != nil {
-		// 	return nil, goa.ErrInternal(err)
-		// }
-		// fmt.Println("RESULTS: ", results)
-
-		// filter2 := map[string]interface{}{
-		// 	"email": bson.RegEx{"^" + "keitaro", ""},
-		// }
-		// err = c.DeleteAll(&filter2)
-		// if err != nil {
-		// 	return nil, goa.ErrInternal(err)
-		// }
 	}
 
 	stringToObjectID(filter)
@@ -212,11 +211,14 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 		if err == mgo.ErrNotFound {
 			return nil, goa.ErrNotFound(err)
 		}
+		if mgo.IsDup(err) {
+			return nil, goa.ErrBadRequest("record already exists!")
+		}
+
 		return nil, goa.ErrInternal(err)
 	}
 
-	var result interface{}
-	err = c.GetOne(filter, result)
+	err = c.GetOne(filter, &result)
 	if err != nil {
 		return nil, goa.ErrInternal(err)
 	}

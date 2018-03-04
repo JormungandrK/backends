@@ -10,7 +10,7 @@ import (
 // Repository defaines the interface for accessing the data
 type Repository interface {
 	GetOne(filter map[string]interface{}, result interface{}) error
-	GetAll(filter map[string]interface{}, order string, limit int, offset int) (interface{}, error)
+	GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error
 	Save(object interface{}, filter map[string]interface{}) (interface{}, error)
 	DeleteOne(filter map[string]interface{}) error
 	DeleteAll(filter map[string]interface{}) error

@@ -51,8 +51,8 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 	return nil
 }
 
-func (c *DynamoCollection) GetAll(filter map[string]interface{}, order string, limit int, offset int) (interface{}, error) {
-	return nil, nil
+func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error {
+	return nil
 }
 
 func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{}) (interface{}, error) {
