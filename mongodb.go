@@ -1,6 +1,9 @@
 package backends
 
 import (
+	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/JormungandrK/microservice-tools/config"
@@ -21,8 +24,8 @@ func init() {
 		collections := map[string]Repository{}
 		for collection, collectionInfo := range dbInfo.Collections {
 			indexes := []string{}
-			for _, index := range collectionInfo["indexes"].([]interface{}) {
-				indexes = append(indexes, index.(string))
+			for _, index := range collectionInfo.Indexes {
+				indexes = append(indexes, index)
 			}
 
 			collectionDB, err := PrepareDB(
@@ -30,8 +33,8 @@ func init() {
 				dbInfo.DatabaseName,
 				collection,
 				indexes,
-				collectionInfo["enableTTL"].(bool),
-				collectionInfo["TTL"].(float64),
+				collectionInfo.EnableTTL,
+				float64(collectionInfo.TTL),
 			)
 			if err != nil {
 				return nil, err
@@ -88,6 +91,7 @@ func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []s
 
 		// Create indexes
 		if err := collection.EnsureIndex(index); err != nil {
+
 			return nil, err
 		}
 	}
@@ -254,4 +258,74 @@ func (c *MongoCollection) DeleteAll(filter map[string]interface{}) error {
 	}
 
 	return nil
+}
+
+// MongoDB builder
+
+var mongoSession *mgo.Session
+var mutex = &sync.Mutex{}
+
+func GetMongoSession(conf *config.DBInfo) (*mgo.Session, error) {
+	if mongoSession != nil {
+		return mongoSession, nil
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	mongoSession, err := NewSession(conf.Host, conf.Username, conf.Password, conf.DatabaseName)
+	if err != nil {
+		mongoSession = nil
+		return nil, err
+	}
+	return mongoSession, nil
+}
+
+func CloseMongoSession() {
+	if mongoSession != nil {
+		mongoSession.Close()
+	}
+	mongoSession = nil
+}
+
+func MongoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Repository, error) {
+	sessionObj := backend.GetFromContext("MONGO_SESSION")
+	if sessionObj == nil {
+		return nil, fmt.Errorf("mongo session not configured")
+	}
+
+	session, ok := sessionObj.(*mgo.Session)
+	if !ok {
+		return nil, fmt.Errorf("unknown session type")
+	}
+
+	indexes := []string{}
+
+	for _, index := range repoDef.GetIndexes() {
+		indexStr, ok := index.(string)
+		if ok {
+			indexes = append(indexes, indexStr)
+		}
+	}
+
+	mongoColl, err := PrepareDB(session, backend.GetConfig().DatabaseName, repoDef.GetName(),
+		indexes, repoDef.EnableTTL(), float64(repoDef.GetTTL()))
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &MongoCollection{
+		Collection: mongoColl,
+	}, nil
+}
+
+func MongoDBBackendBuilder(conf *config.DBInfo, manager BackendManager) (Backend, error) {
+	session, err := NewSession(conf.Host, conf.Username, conf.Password, conf.DatabaseName)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.WithValue(context.Background(), BackendContextKey("MONGO_SESSION"), session)
+	cleanup := func() {
+		session.Close()
+	}
+	return NewRepositoriesBackend(ctx, conf, MongoDBRepoBuilder, cleanup), nil
 }
