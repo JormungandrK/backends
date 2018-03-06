@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/mgo.v2/bson"
+
+	"github.com/aws/aws-sdk-go/aws/awserr"
 )
 
 // interfaceToMap converts interface type (struct or map pointer) to *map[string]interface{}
@@ -61,4 +63,12 @@ func stringToObjectID(object map[string]interface{}) {
 			object["_id"] = bson.ObjectIdHex(id.(string))
 		}
 	}
+}
+
+// IsConditionalCheckErr check if err is dynamoDB condition error
+func IsConditionalCheckErr(err error) bool {
+	if ae, ok := err.(awserr.RequestFailure); ok {
+		return ae.Code() == "ConditionalCheckFailedException"
+	}
+	return false
 }

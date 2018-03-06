@@ -20,18 +20,14 @@ func init() {
 
 		collections := map[string]Repository{}
 		for collection, collectionInfo := range dbInfo.Collections {
-			indexes := []string{}
-			for _, index := range collectionInfo["indexes"].([]interface{}) {
-				indexes = append(indexes, index.(string))
-			}
 
 			collectionDB, err := PrepareDB(
 				mongoSession,
 				dbInfo.DatabaseName,
 				collection,
-				indexes,
-				collectionInfo["enableTTL"].(bool),
-				collectionInfo["TTL"].(float64),
+				collectionInfo.Indexes,
+				collectionInfo.EnableTTL,
+				collectionInfo.TTL,
 			)
 			if err != nil {
 				return nil, err
@@ -71,7 +67,7 @@ func NewSession(Host string, Username string, Password string, Database string) 
 }
 
 // PrepareDB ensure presence of persistent and immutable data in the DB.
-func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL float64) (*mgo.Collection, error) {
+func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL int) (*mgo.Collection, error) {
 	// Create collection
 	collection := session.DB(db).C(dbCollection)
 
@@ -187,6 +183,7 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 
 		id := bson.NewObjectId()
 		(*payload)["_id"] = id
+		delete(*payload, "id")
 
 		err = c.Insert(payload)
 		if err != nil {
