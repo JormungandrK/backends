@@ -2,22 +2,27 @@ package backends
 
 import (
 	"strings"
+	// "time"
+	"fmt"
 
 	"github.com/JormungandrK/microservice-tools/config"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/goadesign/goa"
 	"github.com/guregu/dynamo"
 	"github.com/satori/go.uuid"
 )
 
+// Keys stores hash and range keys
 type Keys struct {
 	HashKey  string
 	RangeKey string
 }
 
+// KEYS stores the keys for each table
 var KEYS = map[string]Keys{}
 
 // init creates dynamoDB backend builder and add it as knows backend type
@@ -28,21 +33,23 @@ func init() {
 			Credentials: credentials.NewSharedCredentials(dbInfo.AWSCredentials, ""),
 		})
 
+		err = createTables(sess, dbInfo)
 		if err != nil {
 			return nil, err
 		}
 
 		db := dynamo.New(sess)
 
-		KEYS["users"] = Keys{"email", "id"}
-		KEYS["tokens"] = Keys{"email", "id"}
+		collections := map[string]Repository{}
+		for collection, collectionInfo := range dbInfo.Collections {
+			KEYS[collection] = Keys{
+				collectionInfo.HashKey,
+				collectionInfo.RangeKey,
+			}
 
-		usersTable := db.Table("users")
-		tokensTable := db.Table("tokens")
+			table := db.Table(collection)
+			collections[collection] = &DynamoCollection{&table}
 
-		collections := map[string]Repository{
-			"users":  &DynamoCollection{&usersTable},
-			"tokens": &DynamoCollection{&tokensTable},
 		}
 
 		return collections, nil
@@ -54,6 +61,92 @@ func init() {
 // DynamoCollection wraps a dynamo.Table to embed methods in models.
 type DynamoCollection struct {
 	*dynamo.Table
+}
+
+// createTables creates tables if they do not exist
+func createTables(sess *session.Session, dbInfo *config.DBInfo) error {
+	svc := dynamodb.New(sess)
+
+	result, err := svc.ListTables(&dynamodb.ListTablesInput{})
+
+	if err != nil {
+		return err
+	}
+
+	tableNames := result.TableNames
+
+	for collection, collectionInfo := range dbInfo.Collections {
+		if !contains(tableNames, collection) {
+			var attributes []*dynamodb.AttributeDefinition
+			var keySchemaElements []*dynamodb.KeySchemaElement
+			var globalSecondaryIndexes []*dynamodb.GlobalSecondaryIndex
+
+			if collectionInfo.HashKey != "" {
+				attributes = append(attributes, &dynamodb.AttributeDefinition{
+					AttributeName: aws.String(collectionInfo.HashKey),
+					AttributeType: aws.String("S"),
+				})
+
+				keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
+					AttributeName: aws.String(collectionInfo.HashKey),
+					KeyType:       aws.String("HASH"),
+				})
+
+			} else {
+				return goa.ErrInternal(fmt.Sprintf("Hash key is missing for collection %s", collection))
+			}
+
+			if collectionInfo.RangeKey != "" {
+				attributes = append(attributes, &dynamodb.AttributeDefinition{
+					AttributeName: aws.String(collectionInfo.RangeKey),
+					AttributeType: aws.String("S"),
+				})
+
+				keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
+					AttributeName: aws.String(collectionInfo.RangeKey),
+					KeyType:       aws.String("RANGE"),
+				})
+			}
+
+			if len(collectionInfo.Indexes) > 0 {
+				for _, index := range collectionInfo.Indexes {
+					globalSecondaryIndexes = append(globalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
+						IndexName: aws.String(fmt.Sprintf("%s-index", index)),
+						KeySchema: []*dynamodb.KeySchemaElement{{
+							AttributeName: aws.String(index),
+							KeyType:       aws.String("HASH"),
+						}},
+						Projection: &dynamodb.Projection{
+							ProjectionType: aws.String("ALL"),
+						},
+						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+							ReadCapacityUnits:  aws.Int64(1),
+							WriteCapacityUnits: aws.Int64(2),
+						},
+					})
+				}
+			}
+
+			input := &dynamodb.CreateTableInput{
+				AttributeDefinitions:   attributes,
+				KeySchema:              keySchemaElements,
+				GlobalSecondaryIndexes: globalSecondaryIndexes,
+				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+					ReadCapacityUnits:  aws.Int64(4),
+					WriteCapacityUnits: aws.Int64(2),
+				},
+				TableName: aws.String(collection),
+			}
+
+			_, err = svc.CreateTable(input)
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+
 }
 
 // GetOne looks up for an item by given filter
@@ -159,7 +252,6 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 			}
 			return nil, goa.ErrInternal(err)
 		}
-
 	} else {
 		// Update item
 

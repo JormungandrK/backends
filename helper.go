@@ -72,3 +72,13 @@ func IsConditionalCheckErr(err error) bool {
 	}
 	return false
 }
+
+// contains checks if
+func contains(s []*string, item string) bool {
+	for _, a := range s {
+		if *a == item {
+			return true
+		}
+	}
+	return false
+}
