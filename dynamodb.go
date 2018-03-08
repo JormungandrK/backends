@@ -249,9 +249,12 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 	if filter == nil {
 		// Create item
 
-		id := uuid.NewV4().String()
-		(*payload)["id"] = id
+		id, err := uuid.NewV4()
+		if err != nil {
+			return nil, goa.ErrInternal(err)
+		}
 
+		(*payload)["id"] = id.String()
 		av, err := dynamodbattribute.MarshalMap(payload)
 		if err != nil {
 			return nil, goa.ErrInternal(err)
