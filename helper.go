@@ -13,6 +13,10 @@ import (
 
 // interfaceToMap converts interface type (struct or map pointer) to *map[string]interface{}
 func interfaceToMap(object interface{}) (*map[string]interface{}, error) {
+	if reflect.ValueOf(object).Kind() != reflect.Ptr {
+		return nil, fmt.Errorf("object should be of pointer type")
+	}
+
 	result := &map[string]interface{}{}
 	rValue := reflect.ValueOf(object).Elem()
 	rKind := rValue.Kind()
@@ -43,8 +47,8 @@ func interfaceToMap(object interface{}) (*map[string]interface{}, error) {
 	return result, nil
 }
 
-// mapToInterface converts map to interface{} type
-func mapToInterface(object interface{}, result interface{}) error {
+// MapToInterface converts map to interface{} type
+func MapToInterface(object interface{}, result interface{}) error {
 
 	jsonStruct, err := json.Marshal(object)
 	if err != nil {
@@ -58,7 +62,8 @@ func mapToInterface(object interface{}, result interface{}) error {
 
 // stringToObjectID converts _id key from string to bson.ObjectId
 func stringToObjectID(object map[string]interface{}) {
-	if id, ok := object["_id"]; ok {
+	if id, ok := object["id"]; ok {
+		delete(object, "id")
 		if reflect.TypeOf(id).String() != "bson.ObjectId" {
 			object["_id"] = bson.ObjectIdHex(id.(string))
 		}

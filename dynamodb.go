@@ -1,9 +1,8 @@
 package backends
 
 import (
-	"strings"
-	// "time"
 	"fmt"
+	"strings"
 
 	"github.com/JormungandrK/microservice-tools/config"
 	"github.com/aws/aws-sdk-go/aws"
@@ -28,10 +27,23 @@ var KEYS = map[string]Keys{}
 // init creates dynamoDB backend builder and add it as knows backend type
 func init() {
 	builder := func(dbInfo *config.DBInfo) (map[string]Repository, error) {
-		sess, err := session.NewSession(&aws.Config{
-			Region:      aws.String(dbInfo.AWSRegion),
-			Credentials: credentials.NewSharedCredentials(dbInfo.AWSCredentials, ""),
-		})
+
+		if dbInfo.AWSRegion == "" {
+			return nil, goa.ErrInternal("AWS region is missing from config")
+		}
+		config := &aws.Config{
+			Region: aws.String(dbInfo.AWSRegion),
+		}
+
+		if dbInfo.AWSEndpoint != "" {
+			config.Endpoint = aws.String(dbInfo.AWSEndpoint)
+		} else if dbInfo.AWSCredentials != "" {
+			config.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
+		} else {
+			return nil, goa.ErrInternal("AWS credentials or endpoint must be specified in the config")
+		}
+
+		sess, err := session.NewSession(config)
 
 		err = createTables(sess, dbInfo)
 		if err != nil {
@@ -120,7 +132,7 @@ func createTables(sess *session.Session, dbInfo *config.DBInfo) error {
 							ProjectionType: aws.String("ALL"),
 						},
 						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-							ReadCapacityUnits:  aws.Int64(1),
+							ReadCapacityUnits:  aws.Int64(2),
 							WriteCapacityUnits: aws.Int64(2),
 						},
 					})
@@ -132,8 +144,8 @@ func createTables(sess *session.Session, dbInfo *config.DBInfo) error {
 				KeySchema:              keySchemaElements,
 				GlobalSecondaryIndexes: globalSecondaryIndexes,
 				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-					ReadCapacityUnits:  aws.Int64(4),
-					WriteCapacityUnits: aws.Int64(2),
+					ReadCapacityUnits:  aws.Int64(collectionInfo.ReadCapacity),
+					WriteCapacityUnits: aws.Int64(collectionInfo.WriteCapacity),
 				},
 				TableName: aws.String(collection),
 			}
@@ -176,7 +188,7 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 	}
 
 	record = records[0]
-	err = mapToInterface(&record, &result)
+	err = MapToInterface(&record, &result)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -211,7 +223,7 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 		records = records[0:limit]
 	}
 
-	err = mapToInterface(&records, &results)
+	err = MapToInterface(&records, &results)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -282,7 +294,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 		payload = &updatedItem
 	}
 
-	err = mapToInterface(payload, &result)
+	err = MapToInterface(payload, &result)
 	if err != nil {
 		return nil, goa.ErrInternal(err)
 	}

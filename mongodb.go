@@ -121,7 +121,7 @@ func (c *MongoCollection) GetOne(filter map[string]interface{}, result interface
 	}
 
 	record["id"] = record["_id"].(bson.ObjectId).Hex()
-	err = mapToInterface(&record, &result)
+	err = MapToInterface(&record, &result)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -162,7 +162,7 @@ func (c *MongoCollection) GetAll(filter map[string]interface{}, results interfac
 		records[index] = v
 	}
 
-	err = mapToInterface(&records, &results)
+	err = MapToInterface(&records, &results)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -194,7 +194,7 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 		}
 
 		(*payload)["id"] = id.Hex()
-		err = mapToInterface(payload, &result)
+		err = MapToInterface(payload, &result)
 		if err != nil {
 			return nil, goa.ErrInternal(err)
 		}
