@@ -175,11 +175,12 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 
 	var result interface{}
 
+	payload, err := interfaceToMap(object)
+	if err != nil {
+		return nil, goa.ErrInternal(err)
+	}
+
 	if filter == nil {
-		payload, err := interfaceToMap(object)
-		if err != nil {
-			return nil, goa.ErrInternal(err)
-		}
 
 		id := bson.NewObjectId()
 		(*payload)["_id"] = id
@@ -203,7 +204,7 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 	}
 
 	stringToObjectID(filter)
-	err := c.Update(filter, object)
+	err = c.Update(filter, bson.M{"$set": payload})
 	if err != nil {
 		if err == mgo.ErrNotFound {
 			return nil, goa.ErrNotFound(err)
