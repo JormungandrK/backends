@@ -111,7 +111,10 @@ func (c *MongoCollection) GetOne(filter map[string]interface{}, result interface
 
 	var record map[string]interface{}
 
-	stringToObjectID(filter)
+	if err := stringToObjectID(filter); err != nil {
+		return goa.ErrBadRequest(err)
+	}
+
 	err := c.Find(filter).One(&record)
 	if err != nil {
 		if err == mgo.ErrNotFound {
@@ -134,7 +137,10 @@ func (c *MongoCollection) GetAll(filter map[string]interface{}, results interfac
 
 	var records []map[string]interface{}
 
-	stringToObjectID(filter)
+	if err := stringToObjectID(filter); err != nil {
+		return goa.ErrBadRequest(err)
+	}
+
 	query := c.Find(filter)
 	if order != "" {
 		if sorting == "desc" {
@@ -175,7 +181,7 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 
 	var result interface{}
 
-	payload, err := interfaceToMap(object)
+	payload, err := InterfaceToMap(object)
 	if err != nil {
 		return nil, goa.ErrInternal(err)
 	}
@@ -203,7 +209,10 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 		return result, nil
 	}
 
-	stringToObjectID(filter)
+	if err := stringToObjectID(filter); err != nil {
+		return nil, goa.ErrBadRequest(err)
+	}
+
 	err = c.Update(filter, bson.M{"$set": payload})
 	if err != nil {
 		if err == mgo.ErrNotFound {
@@ -227,7 +236,10 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 // DeleteOne deletes only one record for given filter
 func (c *MongoCollection) DeleteOne(filter map[string]interface{}) error {
 
-	stringToObjectID(filter)
+	if err := stringToObjectID(filter); err != nil {
+		return goa.ErrBadRequest(err)
+	}
+
 	err := c.Remove(filter)
 	if err != nil {
 		if err == mgo.ErrNotFound {
@@ -242,7 +254,10 @@ func (c *MongoCollection) DeleteOne(filter map[string]interface{}) error {
 // DeleteAll deletes all matched records for given filter
 func (c *MongoCollection) DeleteAll(filter map[string]interface{}) error {
 
-	stringToObjectID(filter)
+	if err := stringToObjectID(filter); err != nil {
+		return goa.ErrBadRequest(err)
+	}
+
 	_, err := c.RemoveAll(filter)
 	if err != nil {
 		if err == mgo.ErrNotFound {

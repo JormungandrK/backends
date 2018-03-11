@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 )
 
-// interfaceToMap converts interface type (struct or map pointer) to *map[string]interface{}
-func interfaceToMap(object interface{}) (*map[string]interface{}, error) {
+// InterfaceToMap converts interface type (struct or map pointer) to *map[string]interface{}
+func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 	if reflect.ValueOf(object).Kind() != reflect.Ptr {
 		return nil, fmt.Errorf("object should be of pointer type")
 	}
@@ -47,7 +47,7 @@ func interfaceToMap(object interface{}) (*map[string]interface{}, error) {
 	return result, nil
 }
 
-// MapToInterface converts map to interface{} type
+// MapToInterface converts map/struct to interface{} type
 func MapToInterface(object interface{}, result interface{}) error {
 
 	jsonStruct, err := json.Marshal(object)
@@ -61,13 +61,19 @@ func MapToInterface(object interface{}, result interface{}) error {
 }
 
 // stringToObjectID converts _id key from string to bson.ObjectId
-func stringToObjectID(object map[string]interface{}) {
+func stringToObjectID(object map[string]interface{}) error {
 	if id, ok := object["id"]; ok {
 		delete(object, "id")
+		if !bson.IsObjectIdHex(id.(string)) {
+			return fmt.Errorf("id is a invalid hex representation of an ObjectId")
+		}
+
 		if reflect.TypeOf(id).String() != "bson.ObjectId" {
 			object["_id"] = bson.ObjectIdHex(id.(string))
 		}
 	}
+
+	return nil
 }
 
 // IsConditionalCheckErr check if err is dynamoDB condition error

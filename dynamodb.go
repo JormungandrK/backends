@@ -237,7 +237,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 
 	var result interface{}
 
-	payload, err := interfaceToMap(object)
+	payload, err := InterfaceToMap(object)
 	if err != nil {
 		return nil, goa.ErrInternal(err)
 	}
