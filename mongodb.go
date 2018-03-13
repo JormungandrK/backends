@@ -1,6 +1,9 @@
 package backends
 
 import (
+	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/JormungandrK/microservice-tools/config"
@@ -10,45 +13,76 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
-// init creates mongoDB backend builder and add it as knows backend type
-func init() {
-	builder := func(dbInfo *config.DBInfo) (map[string]Repository, error) {
-		mongoSession, err := NewSession(dbInfo.Host, dbInfo.Username, dbInfo.Password, dbInfo.DatabaseName)
-		if err != nil {
-			return nil, err
-		}
-
-		collections := map[string]Repository{}
-		for collection, collectionInfo := range dbInfo.Collections {
-
-			collectionDB, err := PrepareDB(
-				mongoSession,
-				dbInfo.DatabaseName,
-				collection,
-				collectionInfo.Indexes,
-				collectionInfo.EnableTTL,
-				collectionInfo.TTL,
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			collections[collection] = &MongoCollection{collectionDB}
-		}
-
-		return collections, nil
-	}
-
-	AddBackendType("mongodb", builder)
-}
-
 // MongoCollection wraps a mgo.Collection to embed methods in models.
 type MongoCollection struct {
 	*mgo.Collection
 }
 
+// mutex is an exclusion lock
+var mutexMongo = &sync.Mutex{}
+
+// MongoDBRepoBuilder builds new mongo collection.
+// If it does not exist builder will create it
+func MongoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Repository, error) {
+
+	sessionObj := backend.GetFromContext("MONGO_SESSION")
+	if sessionObj == nil {
+		return nil, fmt.Errorf("mongo session not configured")
+	}
+
+	session, ok := sessionObj.(*mgo.Session)
+	if !ok {
+		return nil, fmt.Errorf("unknown session type")
+	}
+
+	databaseName := backend.GetConfig().DatabaseName
+	if databaseName == "" {
+		return nil, fmt.Errorf("database name is missing and required")
+	}
+
+	collectionName := repoDef.GetName()
+	if collectionName == "" {
+		return nil, fmt.Errorf("collection name is missing and required")
+	}
+
+	mongoColl, err := PrepareDB(
+		session,
+		databaseName,
+		collectionName,
+		repoDef.GetIndexes(),
+		repoDef.EnableTTL(),
+		repoDef.GetTTL(),
+		repoDef.GetTTLAttribute(),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &MongoCollection{
+		mongoColl,
+	}, nil
+}
+
+// MongoDBBackendBuilder returns RepositoriesBackend
+func MongoDBBackendBuilder(conf *config.DBInfo, manager BackendManager) (Backend, error) {
+
+	session, err := NewSession(conf.Host, conf.Username, conf.Password, conf.DatabaseName)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.WithValue(context.Background(), "MONGO_SESSION", session)
+	cleanup := func() {
+		session.Close()
+	}
+
+	return NewRepositoriesBackend(ctx, conf, MongoDBRepoBuilder, cleanup), nil
+}
+
 // NewSession returns a new Mongo Session.
 func NewSession(Host string, Username string, Password string, Database string) (*mgo.Session, error) {
+
 	session, err := mgo.DialWithInfo(&mgo.DialInfo{
 		Addrs:    []string{Host},
 		Username: Username,
@@ -66,9 +100,12 @@ func NewSession(Host string, Username string, Password string, Database string) 
 	return session, nil
 }
 
-// PrepareDB ensure presence of persistent and immutable data in the DB.
-func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL int) (*mgo.Collection, error) {
-	// Create collection
+// PrepareDB ensure presence of persistent and immutable data in the DB. It creates indexes
+func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL int, TTLField string) (*mgo.Collection, error) {
+
+	mutexMongo.Lock()
+	defer mutexMongo.Unlock()
+
 	collection := session.DB(db).C(dbCollection)
 
 	// Define indexes
@@ -89,8 +126,16 @@ func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []s
 	}
 
 	if enableTTL == true {
+		if TTLField == "" {
+			return nil, fmt.Errorf("TTL attribute is reqired when TTL is enabled")
+		}
+
+		if TTL == 0 {
+			return nil, fmt.Errorf("TTL value is missing and must be greater than zero")
+		}
+
 		index := mgo.Index{
-			Key:         []string{"created_at"},
+			Key:         []string{TTLField},
 			Unique:      false,
 			DropDups:    false,
 			Background:  true,

@@ -1,8 +1,11 @@
 package backends
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/JormungandrK/microservice-tools/config"
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,150 +18,219 @@ import (
 	"github.com/satori/go.uuid"
 )
 
-// Keys stores hash and range keys
-type Keys struct {
-	HashKey  string
-	RangeKey string
-}
+// mutexDynamo is an exclusion lock
+var mutexDynamo = &sync.Mutex{}
 
-// KEYS stores the keys for each table
-var KEYS = map[string]Keys{}
-
-// init creates dynamoDB backend builder and add it as knows backend type
-func init() {
-	builder := func(dbInfo *config.DBInfo) (map[string]Repository, error) {
-
-		if dbInfo.AWSRegion == "" {
-			return nil, goa.ErrInternal("AWS region is missing from config")
-		}
-		config := &aws.Config{
-			Region: aws.String(dbInfo.AWSRegion),
-		}
-
-		if dbInfo.AWSEndpoint != "" {
-			config.Endpoint = aws.String(dbInfo.AWSEndpoint)
-		} else if dbInfo.AWSCredentials != "" {
-			config.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
-		} else {
-			return nil, goa.ErrInternal("AWS credentials or endpoint must be specified in the config")
-		}
-
-		sess, err := session.NewSession(config)
-
-		err = createTables(sess, dbInfo)
-		if err != nil {
-			return nil, err
-		}
-
-		db := dynamo.New(sess)
-
-		collections := map[string]Repository{}
-		for collection, collectionInfo := range dbInfo.Collections {
-			KEYS[collection] = Keys{
-				collectionInfo.HashKey,
-				collectionInfo.RangeKey,
-			}
-
-			table := db.Table(collection)
-			collections[collection] = &DynamoCollection{&table}
-
-		}
-
-		return collections, nil
-	}
-
-	AddBackendType("dynamodb", builder)
-}
+// DYNAMO_CTX_KEY is dynamoDB context key
+var DYNAMO_CTX_KEY = "DYNAMO_SESSION"
 
 // DynamoCollection wraps a dynamo.Table to embed methods in models.
 type DynamoCollection struct {
 	*dynamo.Table
+	RepositoryDefinition
 }
 
-// createTables creates tables if they do not exist
-func createTables(sess *session.Session, dbInfo *config.DBInfo) error {
-	svc := dynamodb.New(sess)
+// DynamoDBRepoBuilder builds new dynamo table.
+// If it does not exist builder will create it
+func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Repository, error) {
+
+	sessionObj := backend.GetFromContext(DYNAMO_CTX_KEY)
+	if sessionObj == nil {
+		return nil, fmt.Errorf("dynamo session not configured")
+	}
+
+	sessionAWS, ok := sessionObj.(*session.Session)
+	if !ok {
+		return nil, fmt.Errorf("unknown session type")
+	}
+
+	databaseName := backend.GetConfig().DatabaseName
+	if databaseName == "" {
+		return nil, fmt.Errorf("database name is missing and required")
+	}
+
+	tableName := repoDef.GetName()
+	if tableName == "" {
+		return nil, fmt.Errorf("table name is missing and required")
+	}
+
+	err := createTable(sessionAWS, repoDef)
+	if err != nil {
+		return nil, err
+	}
+
+	db := dynamo.New(sessionAWS)
+	table := db.Table(tableName)
+
+	return &DynamoCollection{
+		&table,
+		repoDef,
+	}, nil
+}
+
+// DynamoDBBackendBuilder returns RepositoriesBackend
+func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Backend, error) {
+
+	if dbInfo.AWSRegion == "" {
+		return nil, fmt.Errorf("AWS region is missing from config")
+	}
+
+	configAWS := &aws.Config{
+		Region: aws.String(dbInfo.AWSRegion),
+	}
+
+	if dbInfo.AWSEndpoint != "" {
+		configAWS.Endpoint = aws.String(dbInfo.AWSEndpoint)
+	} else if dbInfo.AWSCredentials != "" {
+		configAWS.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
+	} else {
+		return nil, fmt.Errorf("AWS credentials or endpoint must be specified in the config")
+	}
+
+	sess, err := session.NewSession(configAWS)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.WithValue(context.Background(), DYNAMO_CTX_KEY, sess)
+	cleanup := func() {}
+
+	return NewRepositoriesBackend(ctx, dbInfo, DynamoDBRepoBuilder, cleanup), nil
+
+}
+
+// createTable creates table if it does not exist
+func createTable(sessionAWS *session.Session, repoDef RepositoryDefinition) error {
+
+	mutexDynamo.Lock()
+	defer mutexDynamo.Unlock()
+
+	svc := dynamodb.New(sessionAWS)
 
 	result, err := svc.ListTables(&dynamodb.ListTablesInput{})
-
 	if err != nil {
 		return err
 	}
 
+	var attributes []*dynamodb.AttributeDefinition
+	var keySchemaElements []*dynamodb.KeySchemaElement
+	var globalSecondaryIndexes []*dynamodb.GlobalSecondaryIndex
+
+	tableName := repoDef.GetName()
 	tableNames := result.TableNames
+	hashKey := repoDef.GetHashKey()
+	rangeKey := repoDef.GetRangeKey()
 
-	for collection, collectionInfo := range dbInfo.Collections {
-		if !contains(tableNames, collection) {
-			var attributes []*dynamodb.AttributeDefinition
-			var keySchemaElements []*dynamodb.KeySchemaElement
-			var globalSecondaryIndexes []*dynamodb.GlobalSecondaryIndex
+	if contains(tableNames, tableName) {
+		return nil
+	}
 
-			if collectionInfo.HashKey != "" {
-				attributes = append(attributes, &dynamodb.AttributeDefinition{
-					AttributeName: aws.String(collectionInfo.HashKey),
-					AttributeType: aws.String("S"),
-				})
+	if hashKey != "" {
+		attributes = append(attributes, &dynamodb.AttributeDefinition{
+			AttributeName: aws.String(hashKey),
+			AttributeType: aws.String("S"),
+		})
 
-				keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
-					AttributeName: aws.String(collectionInfo.HashKey),
+		keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
+			AttributeName: aws.String(hashKey),
+			KeyType:       aws.String("HASH"),
+		})
+
+	} else {
+		return goa.ErrInternal(fmt.Sprintf("Hash key is missing for table %s", tableName))
+	}
+
+	if rangeKey != "" {
+		attributes = append(attributes, &dynamodb.AttributeDefinition{
+			AttributeName: aws.String(rangeKey),
+			AttributeType: aws.String("S"),
+		})
+
+		keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
+			AttributeName: aws.String(rangeKey),
+			KeyType:       aws.String("RANGE"),
+		})
+	}
+
+	if len(repoDef.GetIndexes()) > 0 {
+		for _, index := range repoDef.GetIndexes() {
+			globalSecondaryIndexes = append(globalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
+				IndexName: aws.String(fmt.Sprintf("%s-index", index)),
+				KeySchema: []*dynamodb.KeySchemaElement{{
+					AttributeName: aws.String(index),
 					KeyType:       aws.String("HASH"),
-				})
-
-			} else {
-				return goa.ErrInternal(fmt.Sprintf("Hash key is missing for collection %s", collection))
-			}
-
-			if collectionInfo.RangeKey != "" {
-				attributes = append(attributes, &dynamodb.AttributeDefinition{
-					AttributeName: aws.String(collectionInfo.RangeKey),
-					AttributeType: aws.String("S"),
-				})
-
-				keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
-					AttributeName: aws.String(collectionInfo.RangeKey),
-					KeyType:       aws.String("RANGE"),
-				})
-			}
-
-			if len(collectionInfo.Indexes) > 0 {
-				for _, index := range collectionInfo.Indexes {
-					globalSecondaryIndexes = append(globalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
-						IndexName: aws.String(fmt.Sprintf("%s-index", index)),
-						KeySchema: []*dynamodb.KeySchemaElement{{
-							AttributeName: aws.String(index),
-							KeyType:       aws.String("HASH"),
-						}},
-						Projection: &dynamodb.Projection{
-							ProjectionType: aws.String("ALL"),
-						},
-						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-							ReadCapacityUnits:  aws.Int64(2),
-							WriteCapacityUnits: aws.Int64(2),
-						},
-					})
-				}
-			}
-
-			input := &dynamodb.CreateTableInput{
-				AttributeDefinitions:   attributes,
-				KeySchema:              keySchemaElements,
-				GlobalSecondaryIndexes: globalSecondaryIndexes,
-				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-					ReadCapacityUnits:  aws.Int64(collectionInfo.ReadCapacity),
-					WriteCapacityUnits: aws.Int64(collectionInfo.WriteCapacity),
+				}},
+				Projection: &dynamodb.Projection{
+					ProjectionType: aws.String("ALL"),
 				},
-				TableName: aws.String(collection),
-			}
-
-			_, err = svc.CreateTable(input)
-
-			if err != nil {
-				return err
-			}
+				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+					ReadCapacityUnits:  aws.Int64(2),
+					WriteCapacityUnits: aws.Int64(2),
+				},
+			})
 		}
 	}
-	return nil
 
+	input := &dynamodb.CreateTableInput{
+		AttributeDefinitions:   attributes,
+		KeySchema:              keySchemaElements,
+		GlobalSecondaryIndexes: globalSecondaryIndexes,
+		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(repoDef.GetReadCapacity()),
+			WriteCapacityUnits: aws.Int64(repoDef.GetWriteCapacity()),
+		},
+		TableName: aws.String(tableName),
+	}
+
+	// Create the table
+	_, err = svc.CreateTable(input)
+	if err != nil {
+		return err
+	}
+
+	// Wait until table is created
+	tableNotCreated := true
+	for tableNotCreated {
+		result, err := svc.ListTables(&dynamodb.ListTablesInput{})
+		if err != nil {
+			return err
+		}
+
+		tables := result.TableNames
+
+		if contains(tables, tableName) {
+			tableNotCreated = false
+		}
+	}
+
+	// Set TimeToLive attribute
+	if repoDef.EnableTTL() {
+		enabled := repoDef.EnableTTL()
+		attribute := repoDef.GetTTLAttribute()
+		TTL := repoDef.GetTTL()
+
+		if attribute == "" {
+			return fmt.Errorf("TTL attribute is reqired when TTL is enabled")
+		}
+
+		if TTL == 0 {
+			return fmt.Errorf("TTL value is missing and must be greater than zero")
+		}
+
+		_, err = svc.UpdateTimeToLive(&dynamodb.UpdateTimeToLiveInput{
+			TableName: &tableName,
+			TimeToLiveSpecification: &dynamodb.TimeToLiveSpecification{
+				AttributeName: &attribute,
+				Enabled:       &enabled,
+			},
+		})
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // GetOne looks up for an item by given filter
@@ -179,7 +251,7 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 		args = append(args, v)
 	}
 
-	err := c.Scan().Filter(strings.Join(query, " AND "), args...).Consistent(true).All(&records)
+	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).Consistent(true).All(&records)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -208,7 +280,7 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 		args = append(args, v)
 	}
 
-	err := c.Scan().Filter(strings.Join(query, " AND "), args...).Consistent(true).All(&records)
+	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).All(&records)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
@@ -242,9 +314,8 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 		return nil, goa.ErrInternal(err)
 	}
 
-	collectionName := c.Name()
-	hashKey := KEYS[collectionName].HashKey
-	rangeKey := KEYS[collectionName].RangeKey
+	hashKey := c.RepositoryDefinition.GetHashKey()
+	rangeKey := c.RepositoryDefinition.GetRangeKey()
 
 	if filter == nil {
 		// Create item
@@ -260,7 +331,13 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 			return nil, goa.ErrInternal(err)
 		}
 
-		err = c.Put(av).If("attribute_not_exists($)", hashKey).Run()
+		if c.RepositoryDefinition.EnableTTL() {
+			attribute := c.RepositoryDefinition.GetTTLAttribute()
+			// TTL := c.RepositoryDefinition.GetTTL()
+			(*payload)[attribute] = time.Now().Add(time.Second * 10)
+		}
+
+		err = c.Table.Put(av).If("attribute_not_exists($)", hashKey).Run()
 		if err != nil {
 			if IsConditionalCheckErr(err) {
 				return nil, goa.ErrBadRequest("record already exists!")
@@ -277,7 +354,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 		}
 		res := item.(map[string]interface{})
 
-		query := c.Update(hashKey, res[hashKey])
+		query := c.Table.Update(hashKey, res[hashKey])
 		if rangeKey != "" {
 			query = query.Range(rangeKey, res[rangeKey])
 		}
@@ -312,9 +389,8 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 // }
 func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
 
-	collectionName := c.Name()
-	hashKey := KEYS[collectionName].HashKey
-	rangeKey := KEYS[collectionName].RangeKey
+	hashKey := c.RepositoryDefinition.GetHashKey()
+	rangeKey := c.RepositoryDefinition.GetRangeKey()
 
 	var item interface{}
 	err := c.GetOne(filter, &item)
@@ -323,7 +399,7 @@ func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
 	}
 	result := item.(map[string]interface{})
 
-	query := c.Delete(hashKey, result[hashKey])
+	query := c.Table.Delete(hashKey, result[hashKey])
 
 	if rangeKey != "" {
 		query = query.Range(rangeKey, result[rangeKey])
@@ -350,10 +426,10 @@ func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
 // email is the hash key, id is the range key
 func (c *DynamoCollection) DeleteAll(filter map[string]interface{}) error {
 
-	collectionName := c.Name()
-	hashKey := KEYS[collectionName].HashKey
-	rangeKey := KEYS[collectionName].RangeKey
+	hashKey := c.RepositoryDefinition.GetHashKey()
+	rangeKey := c.RepositoryDefinition.GetRangeKey()
 	hashAndRangeKeyName := []string{hashKey}
+
 	if rangeKey != "" {
 		hashAndRangeKeyName = append(hashAndRangeKeyName, rangeKey)
 	}
@@ -384,7 +460,7 @@ func (c *DynamoCollection) DeleteAll(filter map[string]interface{}) error {
 		}
 	}
 
-	_, err := c.Batch(hashAndRangeKeyName...).Write().Delete(keys...).Run()
+	_, err := c.Table.Batch(hashAndRangeKeyName...).Write().Delete(keys...).Run()
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
