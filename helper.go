@@ -47,7 +47,7 @@ func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 	return result, nil
 }
 
-// MapToInterface converts map/struct to interface{} type
+// MapToInterface decodes object to result
 func MapToInterface(object interface{}, result interface{}) error {
 
 	jsonStruct, err := json.Marshal(object)
@@ -84,7 +84,7 @@ func IsConditionalCheckErr(err error) bool {
 	return false
 }
 
-// contains checks if
+// contains checks if item is in s array
 func contains(s []*string, item string) bool {
 	for _, a := range s {
 		if *a == item {

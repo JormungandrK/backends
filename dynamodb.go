@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/JormungandrK/microservice-tools/config"
@@ -17,9 +16,6 @@ import (
 	"github.com/guregu/dynamo"
 	"github.com/satori/go.uuid"
 )
-
-// mutexDynamo is an exclusion lock
-var mutexDynamo = &sync.Mutex{}
 
 // DYNAMO_CTX_KEY is dynamoDB context key
 var DYNAMO_CTX_KEY = "DYNAMO_SESSION"
@@ -54,7 +50,13 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 		return nil, fmt.Errorf("table name is missing and required")
 	}
 
-	err := createTable(sessionAWS, repoDef)
+	svc := dynamodb.New(sessionAWS)
+	err := createTable(svc, repoDef)
+	if err != nil {
+		return nil, err
+	}
+
+	err = setTTL(svc, repoDef)
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +102,7 @@ func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Back
 }
 
 // createTable creates table if it does not exist
-func createTable(sessionAWS *session.Session, repoDef RepositoryDefinition) error {
-
-	mutexDynamo.Lock()
-	defer mutexDynamo.Unlock()
-
-	svc := dynamodb.New(sessionAWS)
+func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 
 	result, err := svc.ListTables(&dynamodb.ListTablesInput{})
 	if err != nil {
@@ -152,20 +149,35 @@ func createTable(sessionAWS *session.Session, repoDef RepositoryDefinition) erro
 		})
 	}
 
-	if len(repoDef.GetIndexes()) > 0 {
-		for _, index := range repoDef.GetIndexes() {
-			globalSecondaryIndexes = append(globalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
-				IndexName: aws.String(fmt.Sprintf("%s-index", index)),
-				KeySchema: []*dynamodb.KeySchemaElement{{
+	gsi := repoDef.GetGSI()
+	if gsi != nil {
+		for index, value := range gsi {
+
+			var keySchemaGSI []*dynamodb.KeySchemaElement
+			if index == hashKey {
+				keySchemaGSI = append(keySchemaGSI, &dynamodb.KeySchemaElement{
 					AttributeName: aws.String(index),
 					KeyType:       aws.String("HASH"),
-				}},
+				})
+			} else if index == rangeKey {
+				keySchemaGSI = append(keySchemaGSI, &dynamodb.KeySchemaElement{
+					AttributeName: aws.String(index),
+					KeyType:       aws.String("RANGE"),
+				})
+			} else {
+				return fmt.Errorf("GSI must be hash or range key")
+			}
+
+			v := value.(map[string]interface{})
+			globalSecondaryIndexes = append(globalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
+				IndexName: aws.String(fmt.Sprintf("%s-index", index)),
+				KeySchema: keySchemaGSI,
 				Projection: &dynamodb.Projection{
 					ProjectionType: aws.String("ALL"),
 				},
 				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-					ReadCapacityUnits:  aws.Int64(2),
-					WriteCapacityUnits: aws.Int64(2),
+					ReadCapacityUnits:  aws.Int64(int64(v["readCapacity"].(int))),
+					WriteCapacityUnits: aws.Int64(int64(v["writeCapacity"].(int))),
 				},
 			})
 		}
@@ -188,25 +200,16 @@ func createTable(sessionAWS *session.Session, repoDef RepositoryDefinition) erro
 		return err
 	}
 
-	// Wait until table is created
-	tableNotCreated := true
-	for tableNotCreated {
-		result, err := svc.ListTables(&dynamodb.ListTablesInput{})
-		if err != nil {
-			return err
-		}
+	return nil
+}
 
-		tables := result.TableNames
+// setTTL sets TimeToLive to the table
+func setTTL(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 
-		if contains(tables, tableName) {
-			tableNotCreated = false
-		}
-	}
-
-	// Set TimeToLive attribute
 	if repoDef.EnableTTL() {
 		enabled := repoDef.EnableTTL()
 		attribute := repoDef.GetTTLAttribute()
+		tableName := repoDef.GetName()
 		TTL := repoDef.GetTTL()
 
 		if attribute == "" {
@@ -217,17 +220,20 @@ func createTable(sessionAWS *session.Session, repoDef RepositoryDefinition) erro
 			return fmt.Errorf("TTL value is missing and must be greater than zero")
 		}
 
-		_, err = svc.UpdateTimeToLive(&dynamodb.UpdateTimeToLiveInput{
+		err := svc.WaitUntilTableExists(&dynamodb.DescribeTableInput{
+			TableName: &tableName,
+		})
+		if err != nil {
+			return nil
+		}
+
+		svc.UpdateTimeToLive(&dynamodb.UpdateTimeToLiveInput{
 			TableName: &tableName,
 			TimeToLiveSpecification: &dynamodb.TimeToLiveSpecification{
 				AttributeName: &attribute,
 				Enabled:       &enabled,
 			},
 		})
-
-		if err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -249,6 +255,12 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 		query = append(query, "$ = ?")
 		args = append(args, k)
 		args = append(args, v)
+	}
+
+	if c.RepositoryDefinition.EnableTTL() {
+		query = append(query, "$ > ?")
+		args = append(args, c.RepositoryDefinition.GetTTLAttribute())
+		args = append(args, time.Now())
 	}
 
 	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).Consistent(true).All(&records)
@@ -326,15 +338,17 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 		}
 
 		(*payload)["id"] = id.String()
-		av, err := dynamodbattribute.MarshalMap(payload)
-		if err != nil {
-			return nil, goa.ErrInternal(err)
-		}
 
 		if c.RepositoryDefinition.EnableTTL() {
 			attribute := c.RepositoryDefinition.GetTTLAttribute()
-			// TTL := c.RepositoryDefinition.GetTTL()
-			(*payload)[attribute] = time.Now().Add(time.Second * 10)
+			TTL := c.RepositoryDefinition.GetTTL()
+
+			(*payload)[attribute] = time.Now().Add(time.Second * time.Duration(TTL))
+		}
+
+		av, err := dynamodbattribute.MarshalMap(payload)
+		if err != nil {
+			return nil, goa.ErrInternal(err)
 		}
 
 		err = c.Table.Put(av).If("attribute_not_exists($)", hashKey).Run()

@@ -28,6 +28,7 @@ type RepositoryDefinition interface {
 	GetRangeKey() string
 	GetReadCapacity() int64
 	GetWriteCapacity() int64
+	GetGSI() map[string]interface{}
 }
 
 // Backend defines interface for defining the repository
@@ -43,13 +44,13 @@ type Backend interface {
 // BackendManager defines interface for managing the backend
 type BackendManager interface {
 	GetBackend(backendType string) (Backend, error)
-	SupportBackend(backendType string, builder BackendBuilder_2, properties map[string]interface{})
+	SupportBackend(backendType string, builder BackendBuilder, properties map[string]interface{})
 	GetSupportedBackends() []string
 	GetRequiredBackendProperties(backendType string) (map[string]interface{}, error)
 }
 
-// BackendBuilder_2 builds the backend
-type BackendBuilder_2 func(conf *config.DBInfo, manager BackendManager) (Backend, error)
+// BackendBuilder builds the backend
+type BackendBuilder func(conf *config.DBInfo, manager BackendManager) (Backend, error)
 
 // RepoBuilder builds the repo (collection or table)
 type RepoBuilder func(def RepositoryDefinition, backend Backend) (Repository, error)
@@ -62,7 +63,7 @@ type BackendCleanup func()
 
 // DefaultBackendManager represents the backend store
 type DefaultBackendManager struct {
-	backendBuilders map[string]BackendBuilder_2
+	backendBuilders map[string]BackendBuilder
 	backends        map[string]Backend
 	backendProps    map[string]interface{}
 	dbConfig        map[string]*config.DBInfo
@@ -162,6 +163,15 @@ func (m RepositoryDefinitionMap) GetWriteCapacity() int64 {
 	return 0
 }
 
+// GetGSI returns global secondary indexes
+func (m RepositoryDefinitionMap) GetGSI() map[string]interface{} {
+	if gsi, ok := m["GSI"]; ok {
+		return gsi.(map[string]interface{})
+	}
+
+	return nil
+}
+
 // DefineRepository defines the repository (collection/table)
 func (m *RepositoriesBackend) DefineRepository(name string, def RepositoryDefinition) (Repository, error) {
 
@@ -231,7 +241,7 @@ func (m *DefaultBackendManager) GetBackend(backendType string) (Backend, error) 
 }
 
 // SupportBackend register the DB builder function and required props for the DB
-func (m *DefaultBackendManager) SupportBackend(backendType string, builder BackendBuilder_2, properties map[string]interface{}) {
+func (m *DefaultBackendManager) SupportBackend(backendType string, builder BackendBuilder, properties map[string]interface{}) {
 	m.backendBuilders[backendType] = builder
 	m.backendProps[backendType] = properties
 }
@@ -287,7 +297,7 @@ func NewRepositoriesBackend(ctx context.Context, dbInfo *config.DBInfo, repoBuil
 // NewBackendManager returns new backend manager
 func NewBackendManager(dbConfig map[string]*config.DBInfo) BackendManager {
 	return &DefaultBackendManager{
-		backendBuilders: map[string]BackendBuilder_2{},
+		backendBuilders: map[string]BackendBuilder{},
 		backendProps:    map[string]interface{}{},
 		backends:        map[string]Backend{},
 		dbConfig:        dbConfig,

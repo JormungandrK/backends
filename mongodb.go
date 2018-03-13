@@ -3,7 +3,6 @@ package backends
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/JormungandrK/microservice-tools/config"
@@ -13,19 +12,19 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
+// MONGO_CTX_KEY is mongoDB context key
+var MONGO_CTX_KEY = "MONGO_SESSION"
+
 // MongoCollection wraps a mgo.Collection to embed methods in models.
 type MongoCollection struct {
 	*mgo.Collection
 }
 
-// mutex is an exclusion lock
-var mutexMongo = &sync.Mutex{}
-
 // MongoDBRepoBuilder builds new mongo collection.
 // If it does not exist builder will create it
 func MongoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Repository, error) {
 
-	sessionObj := backend.GetFromContext("MONGO_SESSION")
+	sessionObj := backend.GetFromContext(MONGO_CTX_KEY)
 	if sessionObj == nil {
 		return nil, fmt.Errorf("mongo session not configured")
 	}
@@ -72,7 +71,7 @@ func MongoDBBackendBuilder(conf *config.DBInfo, manager BackendManager) (Backend
 		return nil, err
 	}
 
-	ctx := context.WithValue(context.Background(), "MONGO_SESSION", session)
+	ctx := context.WithValue(context.Background(), MONGO_CTX_KEY, session)
 	cleanup := func() {
 		session.Close()
 	}
@@ -102,9 +101,6 @@ func NewSession(Host string, Username string, Password string, Database string) 
 
 // PrepareDB ensure presence of persistent and immutable data in the DB. It creates indexes
 func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL int, TTLField string) (*mgo.Collection, error) {
-
-	mutexMongo.Lock()
-	defer mutexMongo.Unlock()
 
 	collection := session.DB(db).C(dbCollection)
 
