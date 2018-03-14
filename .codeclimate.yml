@@ -1,0 +1,21 @@
+---
+engines:
+  fixme:
+    enabled: true
+  gofmt:
+    enabled: true
+  golint:
+    enabled: true
+    checks:
+      GoLint/Imports/ImportDot:
+        enabled: false
+  govet:
+    enabled: true
+ratings:
+  paths:
+    - "**.go"
+exclude_patterns:
+  - "app/"
+  - "client/"
+  - "swagger/"
+  - "tool/"
