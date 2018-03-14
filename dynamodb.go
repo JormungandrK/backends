@@ -263,7 +263,7 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 		args = append(args, time.Now())
 	}
 
-	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).Consistent(true).All(&records)
+	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).Limit(int64(1)).All(&records)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
