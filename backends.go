@@ -120,7 +120,7 @@ func (m RepositoryDefinitionMap) GetTTL() int {
 
 // GetTTLAttribute returns the TTL attribute
 func (m RepositoryDefinitionMap) GetTTLAttribute() string {
-	if ttlField, ok := m["ttlField"]; ok {
+	if ttlField, ok := m["ttlAttribute"]; ok {
 		return ttlField.(string)
 	}
 
