@@ -280,6 +280,7 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 	return nil
 }
 
+// GetAll returns all matched records. You can specified limit and offset as well.
 func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error {
 
 	var records []map[string]interface{}
@@ -292,28 +293,45 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 		args = append(args, v)
 	}
 
-	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).All(&records)
-	if err != nil {
-		return goa.ErrInternal(err)
+	if c.RepositoryDefinition.EnableTTL() {
+		query = append(query, "$ > ?")
+		args = append(args, c.RepositoryDefinition.GetTTLAttribute())
+		args = append(args, time.Now())
 	}
-	if records == nil {
+
+	startFrom := 1
+	if offset != 0 {
+		startFrom = offset + 1
+	}
+
+	itr := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).SearchLimit(int64(startFrom)).Iter()
+	for i := 0; ; i++ {
+		record := map[string]interface{}{}
+		more := itr.Next(&record)
+		if itr.Err() != nil {
+			return itr.Err()
+		}
+		if !more {
+			break
+		}
+		if limit != 0 && i >= limit {
+			break
+		}
+
+		records = append(records, record)
+		itr = c.Table.Scan().StartFrom(itr.LastEvaluatedKey()).SearchLimit(1).Iter()
+	}
+
+	if len(records) == 0 {
 		return goa.ErrNotFound("not found")
 	}
 
-	if offset != 0 {
-		records = records[offset:]
-	}
-	if limit != 0 {
-		records = records[0:limit]
-	}
-
-	err = MapToInterface(&records, &results)
+	err := MapToInterface(&records, &results)
 	if err != nil {
 		return goa.ErrInternal(err)
 	}
 
 	return nil
-
 }
 
 // Save creates new item or updates the existing one
