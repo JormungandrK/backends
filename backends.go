@@ -8,13 +8,29 @@ import (
 	"github.com/JormungandrK/microservice-tools/config"
 )
 
+type Filter map[string]interface{}
+
+func NewFilter() Filter {
+	return Filter{}
+}
+
+func (f Filter) Match(property string, value interface{}) Filter {
+	f[property] = value
+	return f
+}
+
+func (f Filter) Set(property string, value interface{}) Filter {
+	f[property] = value
+	return f
+}
+
 // Repository defines the interface for accessing the data
 type Repository interface {
-	GetOne(filter map[string]interface{}, result interface{}) (interface{}, error)
-	GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error
-	Save(object interface{}, filter map[string]interface{}) (interface{}, error)
-	DeleteOne(filter map[string]interface{}) error
-	DeleteAll(filter map[string]interface{}) error
+	GetOne(filter Filter, result interface{}) (interface{}, error)
+	GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error
+	Save(object interface{}, filter Filter) (interface{}, error)
+	DeleteOne(filter Filter) error
+	DeleteAll(filter Filter) error
 }
 
 // RepositoryDefinition defines interface for accessing collection props

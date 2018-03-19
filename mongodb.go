@@ -146,7 +146,7 @@ func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []s
 }
 
 // GetOne fetches only one record for given filter
-func (c *MongoCollection) GetOne(filter map[string]interface{}, result interface{}) (interface{}, error) {
+func (c *MongoCollection) GetOne(filter Filter, result interface{}) (interface{}, error) {
 
 	var record map[string]interface{}
 
@@ -172,7 +172,7 @@ func (c *MongoCollection) GetOne(filter map[string]interface{}, result interface
 }
 
 // GetAll fetches all matched records for given filter
-func (c *MongoCollection) GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error {
+func (c *MongoCollection) GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error {
 
 	var records []map[string]interface{}
 
@@ -216,7 +216,7 @@ func (c *MongoCollection) GetAll(filter map[string]interface{}, results interfac
 }
 
 // Save creates new record unless it does not exist, otherwise it updates the record
-func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}) (interface{}, error) {
+func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, error) {
 
 	var result interface{}
 
@@ -273,7 +273,7 @@ func (c *MongoCollection) Save(object interface{}, filter map[string]interface{}
 }
 
 // DeleteOne deletes only one record for given filter
-func (c *MongoCollection) DeleteOne(filter map[string]interface{}) error {
+func (c *MongoCollection) DeleteOne(filter Filter) error {
 
 	if err := stringToObjectID(filter); err != nil {
 		return ErrInvalidInput(err)
@@ -291,7 +291,7 @@ func (c *MongoCollection) DeleteOne(filter map[string]interface{}) error {
 }
 
 // DeleteAll deletes all matched records for given filter
-func (c *MongoCollection) DeleteAll(filter map[string]interface{}) error {
+func (c *MongoCollection) DeleteAll(filter Filter) error {
 
 	if err := stringToObjectID(filter); err != nil {
 		return ErrInvalidInput(err)

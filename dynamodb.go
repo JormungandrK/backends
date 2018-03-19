@@ -63,6 +63,7 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 	db := dynamo.New(sessionAWS)
 	table := db.Table(tableName)
 
+	fmt.Println("Table created")
 	return &DynamoCollection{
 		&table,
 		repoDef,
@@ -82,14 +83,16 @@ func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Back
 
 	if dbInfo.AWSEndpoint != "" {
 		configAWS.Endpoint = aws.String(dbInfo.AWSEndpoint)
+		fmt.Println("With endpoint, no creds")
 	} else if dbInfo.AWSCredentials != "" {
 		configAWS.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
 	} else {
 		return nil, ErrBackendError("AWS credentials or endpoint must be specified in the config")
 	}
-
+	fmt.Println("***1")
 	sess, err := session.NewSession(configAWS)
 	if err != nil {
+		fmt.Printf("Create session didnt work")
 		return nil, err
 	}
 
@@ -194,10 +197,12 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 	}
 
 	// Create the table
-	_, err = svc.CreateTable(input)
+	cto, err := svc.CreateTable(input)
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("Table created: %v\n", cto)
 
 	return nil
 }
@@ -240,10 +245,10 @@ func setTTL(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 
 // GetOne looks up for an item by given filter
 // Example filter:
-//	filter := map[string]interface{}{
+//	filter := Filter{
 // 		"id":    "54acb6c5-baeb-4213-b10f-e707a6055e64",
 // }
-func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interface{}) (interface{}, error) {
+func (c *DynamoCollection) GetOne(filter Filter, result interface{}) (interface{}, error) {
 
 	var record map[string]interface{}
 	var records []map[string]interface{}
@@ -279,7 +284,7 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 	return result, nil
 }
 
-func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error {
+func (c *DynamoCollection) GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error {
 
 	var records []map[string]interface{}
 
@@ -305,7 +310,7 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 	if limit != 0 {
 		records = records[0:limit]
 	}
-
+	fmt.Printf("Records: %v", records)
 	err = MapToInterface(&records, &results)
 	if err != nil {
 		return err
@@ -316,7 +321,7 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 }
 
 // Save creates new item or updates the existing one
-func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{}) (interface{}, error) {
+func (c *DynamoCollection) Save(object interface{}, filter Filter) (interface{}, error) {
 
 	var result interface{}
 
@@ -400,7 +405,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 //	filter := map[string]interface{}{
 // 		"email": "keitaro-user1@keitaro.com",
 // }
-func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
+func (c *DynamoCollection) DeleteOne(filter Filter) error {
 
 	hashKey := c.RepositoryDefinition.GetHashKey()
 	rangeKey := c.RepositoryDefinition.GetRangeKey()
@@ -437,7 +442,7 @@ func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
 // 			"id":    []string{"378d9777-6a32-4453-849e-858ff243635b", "462e5d47-b88c-4de7-9aaf-89f6c718dddc"},
 // 		}
 // email is the hash key, id is the range key
-func (c *DynamoCollection) DeleteAll(filter map[string]interface{}) error {
+func (c *DynamoCollection) DeleteAll(filter Filter) error {
 
 	hashKey := c.RepositoryDefinition.GetHashKey()
 	rangeKey := c.RepositoryDefinition.GetRangeKey()
