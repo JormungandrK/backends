@@ -3,6 +3,7 @@ package backends
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/goadesign/goa"
 	"github.com/guregu/dynamo"
 	"github.com/satori/go.uuid"
 )
@@ -286,8 +286,13 @@ func (c *DynamoCollection) GetOne(filter Filter, result interface{}) (interface{
 }
 
 // GetAll returns all matched records. You can specify limit and offset as well.
-func (c *DynamoCollection) GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error {
-	var records []map[string]interface{}
+func (c *DynamoCollection) GetAll(filter Filter, resultsTypeHint interface{}, order string, sorting string, limit int, offset int) (interface{}, error) {
+	var results reflect.Value
+
+	resultHint := AsPtr(resultsTypeHint)
+
+	results = NewSliceOfType(resultHint)
+	fmt.Println("Results type: ", resultHint)
 
 	var query []string
 	var args []interface{}
@@ -310,10 +315,13 @@ func (c *DynamoCollection) GetAll(filter Filter, results interface{}, order stri
 
 	itr := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).SearchLimit(int64(startFrom)).Iter()
 	for i := 0; ; i++ {
-		record := map[string]interface{}{}
-		more := itr.Next(&record)
+		record, err := CreateNewAsExample(resultHint)
+		if err != nil {
+			return nil, err
+		}
+		more := itr.Next(record)
 		if itr.Err() != nil {
-			return itr.Err()
+			return nil, itr.Err()
 		}
 		if !more {
 			break
@@ -321,21 +329,12 @@ func (c *DynamoCollection) GetAll(filter Filter, results interface{}, order stri
 		if limit != 0 && i >= limit {
 			break
 		}
+		results = reflect.ValueOf(reflect.Append(results, reflect.ValueOf(record)).Interface())
 
-		records = append(records, record)
 		itr = c.Table.Scan().StartFrom(itr.LastEvaluatedKey()).SearchLimit(1).Iter()
 	}
 
-	if len(records) == 0 {
-		return goa.ErrNotFound("not found")
-	}
-
-	err := MapToInterface(&records, &results)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return results.Interface(), nil
 }
 
 // Save creates new item or updates the existing one

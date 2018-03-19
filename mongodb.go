@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/JormungandrK/microservice-tools/config"
@@ -172,12 +173,13 @@ func (c *MongoCollection) GetOne(filter Filter, result interface{}) (interface{}
 }
 
 // GetAll fetches all matched records for given filter
-func (c *MongoCollection) GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error {
-
-	var records []map[string]interface{}
+func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, order string, sorting string, limit int, offset int) (interface{}, error) {
+	var results interface{}
+	resultsTypeHint = AsPtr(resultsTypeHint)
+	results = NewSliceOfType(resultsTypeHint)
 
 	if err := stringToObjectID(filter); err != nil {
-		return ErrInvalidInput(err)
+		return nil, ErrInvalidInput(err)
 	}
 
 	query := c.Find(filter)
@@ -194,25 +196,43 @@ func (c *MongoCollection) GetAll(filter Filter, results interface{}, order strin
 		query = query.Limit(limit)
 	}
 
-	err := query.All(&records)
+	err := query.All(&results)
 	if err != nil {
 		if err == mgo.ErrNotFound {
-			return ErrNotFound(err)
+			return nil, ErrNotFound(err)
 		}
-		return err
+		return nil, err
 	}
 
-	for index, v := range records {
-		v["id"] = v["_id"].(bson.ObjectId).Hex()
-		records[index] = v
-	}
+	// results is always a Slice
+	err = IterateOverSlice(results, func(i int, item interface{}) error {
+		if item == nil {
+			return nil // ignore
+		}
+		itemType := reflect.TypeOf(item)
+		itemValue := reflect.ValueOf(item)
+		if itemType.Kind() == reflect.Ptr {
+			// item is pointer to something
+			itemType = itemType.Elem()
+			itemValue = reflect.Indirect(itemValue)
+		}
 
-	err = MapToInterface(&records, &results)
-	if err != nil {
-		return err
-	}
+		if itemType.Kind() == reflect.Map {
+			// we have a map[string]<some-type>
+			idValue := itemValue.MapIndex(reflect.ValueOf("_id"))
+			if idValue.IsValid() {
+				// ok,there is such value
+				if bsonID, ok := idValue.Interface().(bson.ObjectId); ok {
+					idStr := bsonID.Hex()
+					itemValue.SetMapIndex(reflect.ValueOf("id"), reflect.ValueOf(idStr))
+				}
+			}
+		}
 
-	return nil
+		return nil
+	})
+
+	return results, nil
 }
 
 // Save creates new record unless it does not exist, otherwise it updates the record

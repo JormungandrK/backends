@@ -60,6 +60,31 @@ func MapToInterface(object interface{}, result interface{}) error {
 	return nil
 }
 
+func IterateOverSlice(slice interface{}, callback func(i int, item interface{}) error) error {
+	if slice == nil {
+		return nil
+	}
+
+	st := reflect.TypeOf(slice)
+	if st.Kind() == reflect.Ptr {
+		st = st.Elem()
+	}
+	if st.Kind() != reflect.Slice {
+		return fmt.Errorf("not slice")
+	}
+
+	stVal := reflect.ValueOf(slice)
+	for i := 0; i < stVal.Len(); i++ {
+		item := stVal.Index(i)
+		err := callback(i, item)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // stringToObjectID converts _id key from string to bson.ObjectId
 func stringToObjectID(object map[string]interface{}) error {
 	if id, ok := object["id"]; ok {
@@ -92,4 +117,87 @@ func contains(s []*string, item string) bool {
 		}
 	}
 	return false
+}
+
+// CreateNewAsExample always returns a pointer to the newely allocated kind
+func CreateNewAsExample(example interface{}) (interface{}, error) {
+	exampleType := reflect.TypeOf(example)
+	if exampleType.Kind() == reflect.Ptr {
+		fmt.Println("Already a ptr")
+		exampleType = exampleType.Elem()
+		fmt.Println("    => but now: ", exampleType.Kind())
+	}
+
+	value, err := createNewFromType(exampleType)
+	if err != nil {
+		return nil, err
+	}
+	return value.Interface(), nil
+}
+
+func createNewFromType(valueType reflect.Type) (reflect.Value, error) {
+	switch kind := valueType.Kind(); kind {
+	case reflect.Map:
+		return valueOrError(reflect.New(valueType))
+	case reflect.Slice:
+		sliceVal := reflect.ValueOf(valueType)
+		slen := 0
+		scap := 0
+		if !sliceVal.IsValid() {
+			slen = sliceVal.Len()
+			scap = sliceVal.Cap()
+		}
+		return valueOrError(reflect.MakeSlice(valueType, slen, scap))
+	default:
+		return valueOrError(reflect.New(valueType))
+	}
+}
+
+func AsPtr(val interface{}) interface{} {
+	valType := reflect.TypeOf(val)
+	if valType.Kind() == reflect.Ptr {
+		return val
+	}
+
+	return reflect.New(valType).Interface()
+}
+
+// func IsSlice(value interface{}) bool {
+// 	valueType := reflect.TypeOf(value)
+// 	if valueType.Kind() == reflect.Ptr {
+// 		valueType = valueType.Elem()
+// 	}
+// 	return valueType.Kind() == reflect.Slice
+// }
+
+// func GetSliceElementZeroValue(sliceValue interface{}) (interface{}, error) {
+// 	valueType := reflect.TypeOf(sliceValue)
+
+// 	if valueType.Kind() == reflect.Ptr {
+// 		valueType = valueType.Elem()
+// 	}
+
+// 	if valueType.Kind() != reflect.Slice {
+// 		return nil, fmt.Errorf("not slice")
+// 	}
+
+// 	valueType = valueType.Elem()
+
+// 	value, err := createNewFromType(valueType)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return value.Interface(), err
+// }
+
+func NewSliceOfType(elementTypeHint interface{}) reflect.Value {
+	elemType := reflect.TypeOf(elementTypeHint)
+	return reflect.MakeSlice(reflect.SliceOf(elemType), 0, 0)
+}
+
+func valueOrError(val reflect.Value) (reflect.Value, error) {
+	if !val.IsValid() {
+		return val, fmt.Errorf("invalid value")
+	}
+	return val, nil
 }

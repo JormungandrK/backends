@@ -27,7 +27,7 @@ func (f Filter) Set(property string, value interface{}) Filter {
 // Repository defines the interface for accessing the data
 type Repository interface {
 	GetOne(filter Filter, result interface{}) (interface{}, error)
-	GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error
+	GetAll(filter Filter, resultsTypeHint interface{}, order string, sorting string, limit int, offset int) (interface{}, error)
 	Save(object interface{}, filter Filter) (interface{}, error)
 	DeleteOne(filter Filter) error
 	DeleteAll(filter Filter) error
