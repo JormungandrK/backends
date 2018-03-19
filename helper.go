@@ -60,6 +60,9 @@ func MapToInterface(object interface{}, result interface{}) error {
 	return nil
 }
 
+// IterateOverSlice iterates over a slice viewed as generic itnerface{}. A callback function is called for
+// every item in the slice. If the callback returns an error, the iteration will break and the function will
+// return that error.
 func IterateOverSlice(slice interface{}, callback func(i int, item interface{}) error) error {
 	if slice == nil {
 		return nil
@@ -119,7 +122,8 @@ func contains(s []*string, item string) bool {
 	return false
 }
 
-// CreateNewAsExample always returns a pointer to the newely allocated kind
+// CreateNewAsExample creates a new value of the same type as the "example" passed to the function.
+// The function always returns a pointer to the created value.
 func CreateNewAsExample(example interface{}) (interface{}, error) {
 	exampleType := reflect.TypeOf(example)
 	if exampleType.Kind() == reflect.Ptr {
@@ -153,6 +157,9 @@ func createNewFromType(valueType reflect.Type) (reflect.Value, error) {
 	}
 }
 
+// AsPtr returns a pointer to the value passed as an argument to this function.
+// If the value is already a pointer to a value, the pointer passed is returned back
+// (no new pointer is created).
 func AsPtr(val interface{}) interface{} {
 	valType := reflect.TypeOf(val)
 	if valType.Kind() == reflect.Ptr {
@@ -162,34 +169,8 @@ func AsPtr(val interface{}) interface{} {
 	return reflect.New(valType).Interface()
 }
 
-// func IsSlice(value interface{}) bool {
-// 	valueType := reflect.TypeOf(value)
-// 	if valueType.Kind() == reflect.Ptr {
-// 		valueType = valueType.Elem()
-// 	}
-// 	return valueType.Kind() == reflect.Slice
-// }
-
-// func GetSliceElementZeroValue(sliceValue interface{}) (interface{}, error) {
-// 	valueType := reflect.TypeOf(sliceValue)
-
-// 	if valueType.Kind() == reflect.Ptr {
-// 		valueType = valueType.Elem()
-// 	}
-
-// 	if valueType.Kind() != reflect.Slice {
-// 		return nil, fmt.Errorf("not slice")
-// 	}
-
-// 	valueType = valueType.Elem()
-
-// 	value, err := createNewFromType(valueType)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return value.Interface(), err
-// }
-
+// NewSliceOfType creates new slice with len 0 and cap 0 with elements of
+// the type passed as an example to the function.
 func NewSliceOfType(elementTypeHint interface{}) reflect.Value {
 	elemType := reflect.TypeOf(elementTypeHint)
 	return reflect.MakeSlice(reflect.SliceOf(elemType), 0, 0)
