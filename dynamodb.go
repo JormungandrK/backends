@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/goadesign/goa"
 	"github.com/guregu/dynamo"
 	"github.com/satori/go.uuid"
 )
@@ -284,8 +285,8 @@ func (c *DynamoCollection) GetOne(filter Filter, result interface{}) (interface{
 	return result, nil
 }
 
+// GetAll returns all matched records. You can specify limit and offset as well.
 func (c *DynamoCollection) GetAll(filter Filter, results interface{}, order string, sorting string, limit int, offset int) error {
-
 	var records []map[string]interface{}
 
 	var query []string
@@ -296,28 +297,45 @@ func (c *DynamoCollection) GetAll(filter Filter, results interface{}, order stri
 		args = append(args, v)
 	}
 
-	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).All(&records)
-	if err != nil {
-		return err
-	}
-	if records == nil {
-		return ErrNotFound("not found")
+	if c.RepositoryDefinition.EnableTTL() {
+		query = append(query, "$ > ?")
+		args = append(args, c.RepositoryDefinition.GetTTLAttribute())
+		args = append(args, time.Now())
 	}
 
+	startFrom := 1
 	if offset != 0 {
-		records = records[offset:]
+		startFrom = offset + 1
 	}
-	if limit != 0 {
-		records = records[0:limit]
+
+	itr := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).SearchLimit(int64(startFrom)).Iter()
+	for i := 0; ; i++ {
+		record := map[string]interface{}{}
+		more := itr.Next(&record)
+		if itr.Err() != nil {
+			return itr.Err()
+		}
+		if !more {
+			break
+		}
+		if limit != 0 && i >= limit {
+			break
+		}
+
+		records = append(records, record)
+		itr = c.Table.Scan().StartFrom(itr.LastEvaluatedKey()).SearchLimit(1).Iter()
 	}
-	fmt.Printf("Records: %v", records)
-	err = MapToInterface(&records, &results)
+
+	if len(records) == 0 {
+		return goa.ErrNotFound("not found")
+	}
+
+	err := MapToInterface(&records, &results)
 	if err != nil {
 		return err
 	}
 
 	return nil
-
 }
 
 // Save creates new item or updates the existing one
