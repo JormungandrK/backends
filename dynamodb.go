@@ -3,6 +3,7 @@ package backends
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/goadesign/goa"
 	"github.com/guregu/dynamo"
 	"github.com/satori/go.uuid"
 )
@@ -32,22 +32,22 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 
 	sessionObj := backend.GetFromContext(DYNAMO_CTX_KEY)
 	if sessionObj == nil {
-		return nil, fmt.Errorf("dynamo session not configured")
+		return nil, ErrBackendError("dynamo session not configured")
 	}
 
 	sessionAWS, ok := sessionObj.(*session.Session)
 	if !ok {
-		return nil, fmt.Errorf("unknown session type")
+		return nil, ErrBackendError("unknown session type")
 	}
 
 	databaseName := backend.GetConfig().DatabaseName
 	if databaseName == "" {
-		return nil, fmt.Errorf("database name is missing and required")
+		return nil, ErrBackendError("database name is missing and required")
 	}
 
 	tableName := repoDef.GetName()
 	if tableName == "" {
-		return nil, fmt.Errorf("table name is missing and required")
+		return nil, ErrBackendError("table name is missing and required")
 	}
 
 	svc := dynamodb.New(sessionAWS)
@@ -64,6 +64,7 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 	db := dynamo.New(sessionAWS)
 	table := db.Table(tableName)
 
+	fmt.Println("Table created")
 	return &DynamoCollection{
 		&table,
 		repoDef,
@@ -74,7 +75,7 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Backend, error) {
 
 	if dbInfo.AWSRegion == "" {
-		return nil, fmt.Errorf("AWS region is missing from config")
+		return nil, ErrBackendError("AWS region is missing from config")
 	}
 
 	configAWS := &aws.Config{
@@ -83,14 +84,16 @@ func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Back
 
 	if dbInfo.AWSEndpoint != "" {
 		configAWS.Endpoint = aws.String(dbInfo.AWSEndpoint)
+		fmt.Println("With endpoint, no creds")
 	} else if dbInfo.AWSCredentials != "" {
 		configAWS.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
 	} else {
-		return nil, fmt.Errorf("AWS credentials or endpoint must be specified in the config")
+		return nil, ErrBackendError("AWS credentials or endpoint must be specified in the config")
 	}
-
+	fmt.Println("***1")
 	sess, err := session.NewSession(configAWS)
 	if err != nil {
+		fmt.Printf("Create session didnt work")
 		return nil, err
 	}
 
@@ -134,7 +137,7 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 		})
 
 	} else {
-		return goa.ErrInternal(fmt.Sprintf("Hash key is missing for table %s", tableName))
+		return ErrBackendError(fmt.Sprintf("Hash key is missing for table %s", tableName))
 	}
 
 	if rangeKey != "" {
@@ -165,7 +168,7 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 					KeyType:       aws.String("RANGE"),
 				})
 			} else {
-				return fmt.Errorf("GSI must be hash or range key")
+				return ErrBackendError("GSI must be hash or range key")
 			}
 
 			v := value.(map[string]interface{})
@@ -195,10 +198,12 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 	}
 
 	// Create the table
-	_, err = svc.CreateTable(input)
+	cto, err := svc.CreateTable(input)
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("Table created: %v\n", cto)
 
 	return nil
 }
@@ -213,11 +218,11 @@ func setTTL(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 		TTL := repoDef.GetTTL()
 
 		if attribute == "" {
-			return fmt.Errorf("TTL attribute is reqired when TTL is enabled")
+			return ErrBackendError("TTL attribute is reqired when TTL is enabled")
 		}
 
 		if TTL == 0 {
-			return fmt.Errorf("TTL value is missing and must be greater than zero")
+			return ErrBackendError("TTL value is missing and must be greater than zero")
 		}
 
 		err := svc.WaitUntilTableExists(&dynamodb.DescribeTableInput{
@@ -241,10 +246,10 @@ func setTTL(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 
 // GetOne looks up for an item by given filter
 // Example filter:
-//	filter := map[string]interface{}{
+//	filter := Filter{
 // 		"id":    "54acb6c5-baeb-4213-b10f-e707a6055e64",
 // }
-func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interface{}) error {
+func (c *DynamoCollection) GetOne(filter Filter, result interface{}) (interface{}, error) {
 
 	var record map[string]interface{}
 	var records []map[string]interface{}
@@ -265,25 +270,29 @@ func (c *DynamoCollection) GetOne(filter map[string]interface{}, result interfac
 
 	err := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).Limit(int64(1)).All(&records)
 	if err != nil {
-		return goa.ErrInternal(err)
+		return nil, err
 	}
 	if records == nil {
-		return goa.ErrNotFound("not found")
+		return nil, ErrNotFound("Record not found")
 	}
 
 	record = records[0]
 	err = MapToInterface(&record, &result)
 	if err != nil {
-		return goa.ErrInternal(err)
+		return nil, err
 	}
 
-	return nil
+	return result, nil
 }
 
-// GetAll returns all matched records. You can specified limit and offset as well.
-func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interface{}, order string, sorting string, limit int, offset int) error {
+// GetAll returns all matched records. You can specify limit and offset as well.
+func (c *DynamoCollection) GetAll(filter Filter, resultsTypeHint interface{}, order string, sorting string, limit int, offset int) (interface{}, error) {
+	var results reflect.Value
 
-	var records []map[string]interface{}
+	resultHint := AsPtr(resultsTypeHint)
+
+	results = NewSliceOfType(resultHint)
+	fmt.Println("Results type: ", resultHint)
 
 	var query []string
 	var args []interface{}
@@ -306,10 +315,13 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 
 	itr := c.Table.Scan().Filter(strings.Join(query, " AND "), args...).SearchLimit(int64(startFrom)).Iter()
 	for i := 0; ; i++ {
-		record := map[string]interface{}{}
-		more := itr.Next(&record)
+		record, err := CreateNewAsExample(resultHint)
+		if err != nil {
+			return nil, err
+		}
+		more := itr.Next(record)
 		if itr.Err() != nil {
-			return itr.Err()
+			return nil, itr.Err()
 		}
 		if !more {
 			break
@@ -317,31 +329,22 @@ func (c *DynamoCollection) GetAll(filter map[string]interface{}, results interfa
 		if limit != 0 && i >= limit {
 			break
 		}
+		results = reflect.ValueOf(reflect.Append(results, reflect.ValueOf(record)).Interface())
 
-		records = append(records, record)
 		itr = c.Table.Scan().StartFrom(itr.LastEvaluatedKey()).SearchLimit(1).Iter()
 	}
 
-	if len(records) == 0 {
-		return goa.ErrNotFound("not found")
-	}
-
-	err := MapToInterface(&records, &results)
-	if err != nil {
-		return goa.ErrInternal(err)
-	}
-
-	return nil
+	return results.Interface(), nil
 }
 
 // Save creates new item or updates the existing one
-func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{}) (interface{}, error) {
+func (c *DynamoCollection) Save(object interface{}, filter Filter) (interface{}, error) {
 
 	var result interface{}
 
 	payload, err := InterfaceToMap(object)
 	if err != nil {
-		return nil, goa.ErrInternal(err)
+		return nil, err
 	}
 
 	hashKey := c.RepositoryDefinition.GetHashKey()
@@ -352,7 +355,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 
 		id, err := uuid.NewV4()
 		if err != nil {
-			return nil, goa.ErrInternal(err)
+			return nil, err
 		}
 
 		(*payload)["id"] = id.String()
@@ -366,21 +369,21 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 
 		av, err := dynamodbattribute.MarshalMap(payload)
 		if err != nil {
-			return nil, goa.ErrInternal(err)
+			return nil, err
 		}
 
 		err = c.Table.Put(av).If("attribute_not_exists($)", hashKey).Run()
 		if err != nil {
 			if IsConditionalCheckErr(err) {
-				return nil, goa.ErrBadRequest("record already exists!")
+				return nil, ErrAlreadyExists("record already exists!")
 			}
-			return nil, goa.ErrInternal(err)
+			return nil, err
 		}
 	} else {
 		// Update item
 
 		var item interface{}
-		err = c.GetOne(filter, &item)
+		_, err = c.GetOne(filter, &item)
 		if err != nil {
 			return nil, err
 		}
@@ -400,7 +403,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 		var updatedItem map[string]interface{}
 		err = query.Value(&updatedItem)
 		if err != nil {
-			return nil, goa.ErrInternal(err)
+			return nil, err
 		}
 
 		payload = &updatedItem
@@ -408,7 +411,7 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 
 	err = MapToInterface(payload, &result)
 	if err != nil {
-		return nil, goa.ErrInternal(err)
+		return nil, err
 	}
 
 	return result, nil
@@ -419,13 +422,13 @@ func (c *DynamoCollection) Save(object interface{}, filter map[string]interface{
 //	filter := map[string]interface{}{
 // 		"email": "keitaro-user1@keitaro.com",
 // }
-func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
+func (c *DynamoCollection) DeleteOne(filter Filter) error {
 
 	hashKey := c.RepositoryDefinition.GetHashKey()
 	rangeKey := c.RepositoryDefinition.GetRangeKey()
 
 	var item interface{}
-	err := c.GetOne(filter, &item)
+	_, err := c.GetOne(filter, &item)
 	if err != nil {
 		return err
 	}
@@ -441,9 +444,9 @@ func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
 	err = query.OldValue(&old)
 	if err != nil {
 		if err == dynamo.ErrNotFound {
-			return goa.ErrNotFound(err)
+			return ErrNotFound(err)
 		}
-		return goa.ErrInternal(err)
+		return err
 	}
 
 	return nil
@@ -456,7 +459,7 @@ func (c *DynamoCollection) DeleteOne(filter map[string]interface{}) error {
 // 			"id":    []string{"378d9777-6a32-4453-849e-858ff243635b", "462e5d47-b88c-4de7-9aaf-89f6c718dddc"},
 // 		}
 // email is the hash key, id is the range key
-func (c *DynamoCollection) DeleteAll(filter map[string]interface{}) error {
+func (c *DynamoCollection) DeleteAll(filter Filter) error {
 
 	hashKey := c.RepositoryDefinition.GetHashKey()
 	rangeKey := c.RepositoryDefinition.GetRangeKey()
@@ -468,18 +471,18 @@ func (c *DynamoCollection) DeleteAll(filter map[string]interface{}) error {
 
 	hashValues, ok := filter[hashKey].([]string)
 	if !ok {
-		return goa.ErrInternal("hash key not specified in the filter")
+		return ErrBackendError("hash key not specified in the filter")
 	}
 
 	rangeValues := []string{}
 	if rangeKey != "" {
 		rangeValues, ok = filter[rangeKey].([]string)
 		if !ok {
-			return goa.ErrInternal("range key not specified in the filter")
+			return ErrBackendError("range key not specified in the filter")
 		}
 
 		if len(hashValues) != len(rangeValues) {
-			return goa.ErrInternal("length of the values for hash and range key in the filter must be equal")
+			return ErrBackendError("length of the values for hash and range key in the filter must be equal")
 		}
 	}
 
@@ -494,7 +497,7 @@ func (c *DynamoCollection) DeleteAll(filter map[string]interface{}) error {
 
 	_, err := c.Table.Batch(hashAndRangeKeyName...).Write().Delete(keys...).Run()
 	if err != nil {
-		return goa.ErrInternal(err)
+		return err
 	}
 
 	return nil
