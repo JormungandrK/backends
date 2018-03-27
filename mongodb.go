@@ -260,12 +260,12 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 		}
 
 		(*payload)["id"] = id.Hex()
-		err = MapToInterface(payload, &result)
+		err = MapToInterface(payload, &object)
 		if err != nil {
 			return nil, err
 		}
 
-		return result, nil
+		return object, nil
 	}
 
 	if err := stringToObjectID(filter); err != nil {
