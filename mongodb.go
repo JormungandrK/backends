@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/JormungandrK/microservice-tools/config"
+	"github.com/Microkubes/microservice-tools/config"
 
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
@@ -99,16 +99,16 @@ func NewSession(Host string, Username string, Password string, Database string) 
 }
 
 // PrepareDB ensure presence of persistent and immutable data in the DB. It creates indexes
-func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []string, enableTTL bool, TTL int, TTLField string) (*mgo.Collection, error) {
+func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []Index, enableTTL bool, TTL int, TTLField string) (*mgo.Collection, error) {
 
 	collection := session.DB(db).C(dbCollection)
 
 	// Define indexes
 	for _, elem := range indexes {
-		i := []string{elem}
+		i := elem.GetFields()
 		index := mgo.Index{
 			Key:        i,
-			Unique:     true,
+			Unique:     elem.Unique(),
 			DropDups:   true,
 			Background: true,
 			Sparse:     true,
@@ -260,12 +260,12 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 		}
 
 		(*payload)["id"] = id.Hex()
-		err = MapToInterface(payload, &result)
+		err = MapToInterface(payload, &object)
 		if err != nil {
 			return nil, err
 		}
 
-		return result, nil
+		return object, nil
 	}
 
 	if err := stringToObjectID(filter); err != nil {

@@ -1,6 +1,6 @@
 package backends
 
-import "github.com/JormungandrK/microservice-tools/config"
+import "github.com/Microkubes/microservice-tools/config"
 
 // addSupported adds new backends
 func addSupported(manager BackendManager) {

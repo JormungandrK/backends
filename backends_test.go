@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/JormungandrK/microservice-tools/config"
+	"github.com/Microkubes/microservice-tools/config"
 	"github.com/guregu/dynamo"
 )
 
@@ -26,7 +26,7 @@ var props = map[string]interface{}{
 
 var collectionInfo = RepositoryDefinitionMap{
 	"name":          "tokens",
-	"indexes":       []string{"token"},
+	"indexes":       []Index{NewUniqueIndex("token")},
 	"hashKey":       "token",
 	"readCapacity":  int64(5),
 	"writeCapacity": int64(5),
@@ -36,9 +36,9 @@ var collectionInfo = RepositoryDefinitionMap{
 			"writeCapacity": 2,
 		},
 	},
-	"enableTtl": true,
-	"ttlField":  "created_at",
-	"ttl":       86400,
+	"enableTtl":    true,
+	"ttlAttribute": "created_at",
+	"ttl":          86400,
 }
 
 var repoBuilder = &RepositoriesBackend{

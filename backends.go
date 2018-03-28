@@ -3,9 +3,11 @@ package backends
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 	"sync"
 
-	"github.com/JormungandrK/microservice-tools/config"
+	"github.com/Microkubes/microservice-tools/config"
 )
 
 type Filter map[string]interface{}
@@ -33,10 +35,16 @@ type Repository interface {
 	DeleteAll(filter Filter) error
 }
 
+type Index interface {
+	GetName() string
+	GetFields() []string
+	Unique() bool
+}
+
 // RepositoryDefinition defines interface for accessing collection props
 type RepositoryDefinition interface {
 	GetName() string
-	GetIndexes() []string
+	GetIndexes() []Index
 	EnableTTL() bool
 	GetTTL() int
 	GetTTLAttribute() string
@@ -97,11 +105,14 @@ type RepositoriesBackend struct {
 }
 
 // GetIndexes returns the indexes for colletion or table
-func (m RepositoryDefinitionMap) GetIndexes() []string {
-	indexes := []string{}
+func (m RepositoryDefinitionMap) GetIndexes() []Index {
+	indexes := []Index{}
 
-	if indxsif, ok := m["indexes"]; ok {
-		return indxsif.([]string)
+	if idxArr, ok := m["indexes"]; ok {
+		if idxArrayOfIndex, ok := idxArr.([]Index); ok {
+			return idxArrayOfIndex
+		}
+		log.Fatal("The indexes must be defined as []Index")
 	}
 
 	return indexes
@@ -319,4 +330,50 @@ func NewBackendManager(dbConfig map[string]*config.DBInfo) BackendManager {
 		dbConfig:        dbConfig,
 		mutex:           &sync.Mutex{},
 	}
+}
+
+// Index interface implementation
+type fieldsIndex struct {
+	fields []string
+	name   string
+	unique bool
+}
+
+func (f *fieldsIndex) GetName() string {
+	return f.name
+}
+
+func (f *fieldsIndex) GetFields() []string {
+	return f.fields
+}
+
+func (f *fieldsIndex) Unique() bool {
+	return f.unique
+}
+
+func NewIndex(name string, unique bool, fields ...string) Index {
+	if fields == nil {
+		fields = []string{}
+	}
+	return &fieldsIndex{
+		name:   name,
+		fields: fields,
+		unique: unique,
+	}
+}
+
+func indexNameFromFields(fields ...string) string {
+	name := ""
+	if fields != nil {
+		name = strings.Join(fields, "_")
+	}
+	return name
+}
+
+func NewUniqueIndex(fields ...string) Index {
+	return NewIndex(indexNameFromFields(fields...), true, fields...)
+}
+
+func NewNonUniqueIndex(fields ...string) Index {
+	return NewIndex(indexNameFromFields(fields...), false, fields...)
 }
