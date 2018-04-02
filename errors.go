@@ -88,8 +88,8 @@ func IsErrNotFound(err error) bool {
 	return IsErrorOfType(err, ErrNotFound(""))
 }
 
-// IsErrAlreadyExistis check of the error is of the ErrAlreadyExists class.
-func IsErrAlreadyExistis(err error) bool {
+// IsErrAlreadyExists check of the error is of the ErrAlreadyExists class.
+func IsErrAlreadyExists(err error) bool {
 	return IsErrorOfType(err, ErrAlreadyExists(""))
 }
 
