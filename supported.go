@@ -5,31 +5,146 @@ import "github.com/Microkubes/microservice-tools/config"
 // addSupported adds new backends
 func addSupported(manager BackendManager) {
 	manager.SupportBackend("mongodb", MongoDBBackendBuilder, map[string]interface{}{
-		"dbName":   "string",
-		"host":     "string",
-		"database": "string",
-		"collections": map[string]interface{}{
-			"string": map[string]interface{}{
-				"indexes":   "string array",
-				"enableTTL": "bool",
-				"TTL":       "int",
+		"type": map[string]interface{}{
+			"required": true,
+			"type":     "string",
+		},
+		"host": map[string]interface{}{
+			"required": true,
+			"type":     "string",
+		},
+		"database": map[string]interface{}{
+			"required": true,
+			"type":     "string",
+		},
+		"credentials": map[string]interface{}{
+			"type":     "object",
+			"required": true,
+			"properties": map[string]interface{}{
+				"username": map[string]interface{}{
+					"type":     "string",
+					"required": true,
+				},
+				"password": map[string]interface{}{
+					"type":     "string",
+					"required": true,
+				},
 			},
 		},
-		"user": "string",
-		"pass": "string",
+		"collections": map[string]interface{}{
+			"type": "map",
+			"key": map[string]interface{}{
+				"type": "string",
+			},
+			"value": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":     "string",
+						"required": true,
+					},
+					"indexes": map[string]interface{}{
+						"elementType": "object",
+						"elementProperties": map[string]interface{}{
+							"columns": map[string]interface{}{
+								"array":       true,
+								"elementType": "string",
+								"required":    true,
+							},
+							"unique": map[string]interface{}{
+								"type":     "boolean",
+								"required": true,
+							},
+						},
+						"array": true,
+					},
+					"enableTtl": map[string]interface{}{
+						"type": "boolean",
+					},
+					"ttl": map[string]interface{}{
+						"type": "integer",
+					},
+					"ttlAttribute": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+		},
 	})
 
 	manager.SupportBackend("dynamodb", DynamoDBBackendBuilder, map[string]interface{}{
-		"dbName":      "string",
-		"credentials": "string",
-		"awsRegion":   "string",
-		"database":    "string",
-		"collections": map[string]interface{}{
-			"string": map[string]interface{}{
-				"indexes":   "string array",
-				"enableTTL": "bool",
-				"TTL":       "int",
+		"type": map[string]interface{}{
+			"required": true,
+			"type":     "string",
+		},
+		"host": map[string]interface{}{
+			"required": true,
+			"type":     "string",
+		},
+		"database": map[string]interface{}{
+			"required": true,
+			"type":     "string",
+		},
+		"credentials": map[string]interface{}{
+			"type":     "object",
+			"required": true,
+			"properties": map[string]interface{}{
+				"username": map[string]interface{}{
+					"type":     "string",
+					"required": true,
+				},
+				"password": map[string]interface{}{
+					"type":     "string",
+					"required": true,
+				},
 			},
+		},
+		"collections": map[string]interface{}{
+			"type": "map",
+			"key": map[string]interface{}{
+				"type": "string",
+			},
+			"value": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":     "string",
+						"required": true,
+					},
+					"indexes": map[string]interface{}{
+						"elementType": "object",
+						"elementProperties": map[string]interface{}{
+							"columns": map[string]interface{}{
+								"array":       true,
+								"elementType": "string",
+								"required":    true,
+							},
+							"unique": map[string]interface{}{
+								"type":     "boolean",
+								"required": true,
+							},
+						},
+						"array": true,
+					},
+					"enableTtl": map[string]interface{}{
+						"type": "boolean",
+					},
+					"ttl": map[string]interface{}{
+						"type": "integer",
+					},
+					"ttlAttribute": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+		},
+		"awsEndpoint": map[string]interface{}{
+			"type":     "string",
+			"required": true,
+		},
+		"awsRegion": map[string]interface{}{
+			"type":     "string",
+			"required": true,
 		},
 	})
 }
