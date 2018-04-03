@@ -1,6 +1,8 @@
 package backends
 
-import "github.com/Microkubes/microservice-tools/config"
+import (
+	"github.com/Microkubes/microservice-tools/config"
+)
 
 // addSupported adds new backends
 func addSupported(manager BackendManager) {
@@ -57,6 +59,7 @@ func addSupported(manager BackendManager) {
 							},
 						},
 						"array": true,
+						"type":  "array",
 					},
 					"enableTtl": map[string]interface{}{
 						"type": "boolean",
@@ -133,6 +136,25 @@ func addSupported(manager BackendManager) {
 						"type": "integer",
 					},
 					"ttlAttribute": map[string]interface{}{
+						"type": "string",
+					},
+					"dynamoHashKey": map[string]interface{}{
+						"type":     "string",
+						"required": true,
+					},
+					"dynamoRangeKey": map[string]interface{}{
+						"type":     "string",
+						"required": true,
+					},
+					"dynamoReadCapacity": map[string]interface{}{
+						"type":     "integer",
+						"required": true,
+					},
+					"dynamoWriteCapacity": map[string]interface{}{
+						"type":     "integer",
+						"required": true,
+					},
+					"dynamoGSI": map[string]interface{}{
 						"type": "string",
 					},
 				},
