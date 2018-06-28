@@ -183,17 +183,30 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 	}
 
 	query := c.Find(filter)
-	if order != "" {
-		if sorting == "desc" {
-			order = "-" + order
-		}
+
+	switch order {
+	case "ascending":
 		query = query.Sort(order)
+	case "descending":
+		order = "-" + order
+		query = query.Sort(order)
+	default:
+		err := "Invalid input."
+		return nil, ErrInvalidInput(err)
 	}
-	if offset != 0 {
+
+	if offset > 0{
 		query = query.Skip(offset)
+	} else {
+		err := "The offset can't be zero or a negative number."
+		return nil, ErrInvalidInput(err)
 	}
-	if limit != 0 {
+
+	if limit > 0 {
 		query = query.Limit(limit)
+	} else {
+		err := "The limit can't be zero or a negative number."
+		return nil, ErrInvalidInput(err)
 	}
 
 	err := query.All(&results)
@@ -237,16 +250,13 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 
 // Save creates new record unless it does not exist, otherwise it updates the record
 func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, error) {
-
 	var result interface{}
-
 	payload, err := InterfaceToMap(object)
 	if err != nil {
 		return nil, err
 	}
 
 	if filter == nil {
-
 		id := bson.NewObjectId()
 		(*payload)["_id"] = id
 		delete(*payload, "id")
