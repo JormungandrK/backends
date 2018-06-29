@@ -184,15 +184,18 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 
 	query := c.Find(filter)
 
-	switch order {
-	case "ascending":
-		query = query.Sort(order)
-	case "descending":
-		order = "-" + order
-		query = query.Sort(order)
-	default:
-		err := "Invalid input."
-		return nil, ErrInvalidInput(err)
+	if order != "" {
+		switch sorting {
+		case "ascending":
+			query = query.Sort(order)
+		case "descending":
+			order = "-" + order
+			query = query.Sort(order)
+		default:
+			err := "Invalid input."
+			return nil, ErrInvalidInput(err)
+		}
+
 	}
 
 	if offset > 0{
