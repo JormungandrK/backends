@@ -168,22 +168,19 @@ func (c *MongoCollection) GetOne(filter Filter, result interface{}) (interface{}
 	if err != nil {
 		return nil, err
 	}
-
+	
 	return result, nil
 }
 
 // GetAll fetches all matched records for given filter
 func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, order string, sorting string, limit int, offset int) (interface{}, error) {
-	var results interface{}
-	resultsTypeHint = AsPtr(resultsTypeHint)
-	results = NewSliceOfType(resultsTypeHint)
-
+	var results []map[string]interface{}
+	
 	if err := stringToObjectID(filter); err != nil {
 		return nil, ErrInvalidInput(err)
 	}
-
+	
 	query := c.Find(filter)
-
 	if order != "" {
 		switch sorting {
 		case "ascending":
@@ -195,10 +192,9 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 			err := "Invalid input."
 			return nil, ErrInvalidInput(err)
 		}
-
 	}
 
-	if offset > 0{
+	if offset >= 0 {
 		query = query.Skip(offset)
 	} else {
 		err := "The offset can't be zero or a negative number."
