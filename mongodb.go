@@ -174,9 +174,12 @@ func (c *MongoCollection) GetOne(filter Filter, result interface{}) (interface{}
 
 // GetAll fetches all matched records for given filter
 func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, order string, sorting string, limit int, offset int) (interface{}, error) {
-	var results interface{}
 	resultsTypeHint = AsPtr(resultsTypeHint)
-	results = NewSliceOfType(resultsTypeHint)
+	results := NewSliceOfType(resultsTypeHint)
+
+	// Create a pointer to a slice value and set it to the slice
+	slicePointer := reflect.New(results.Type())
+	slicePointer.Elem().Set(results)
 
 	if err := stringToObjectID(filter); err != nil {
 		return nil, ErrInvalidInput(err)
@@ -196,7 +199,7 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 		query = query.Limit(limit)
 	}
 
-	err := query.All(&results)
+	err := query.All(slicePointer.Interface())
 	if err != nil {
 		if err == mgo.ErrNotFound {
 			return nil, ErrNotFound(err)
@@ -205,12 +208,13 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 	}
 
 	// results is always a Slice
-	err = IterateOverSlice(results, func(i int, item interface{}) error {
+	err = IterateOverSlice(slicePointer.Interface(), func(i int, item interface{}) error {
 		if item == nil {
 			return nil // ignore
 		}
-		itemType := reflect.TypeOf(item)
+
 		itemValue := reflect.ValueOf(item)
+		itemType := reflect.TypeOf(item)
 		if itemType.Kind() == reflect.Ptr {
 			// item is pointer to something
 			itemType = itemType.Elem()
@@ -225,6 +229,7 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 				if bsonID, ok := idValue.Interface().(bson.ObjectId); ok {
 					idStr := bsonID.Hex()
 					itemValue.SetMapIndex(reflect.ValueOf("id"), reflect.ValueOf(idStr))
+					itemValue.SetMapIndex(reflect.ValueOf("_id"), reflect.Value{})
 				}
 			}
 		}
@@ -232,7 +237,7 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 		return nil
 	})
 
-	return results, nil
+	return slicePointer.Interface(), nil
 }
 
 // Save creates new record unless it does not exist, otherwise it updates the record

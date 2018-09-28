@@ -68,18 +68,17 @@ func IterateOverSlice(slice interface{}, callback func(i int, item interface{}) 
 		return nil
 	}
 
-	st := reflect.TypeOf(slice)
-	if st.Kind() == reflect.Ptr {
-		st = st.Elem()
+	stVal := reflect.ValueOf(slice)
+	if stVal.Kind() == reflect.Ptr {
+		stVal = stVal.Elem()
 	}
-	if st.Kind() != reflect.Slice {
+	if stVal.Kind() != reflect.Slice {
 		return fmt.Errorf("not slice")
 	}
 
-	stVal := reflect.ValueOf(slice)
 	for i := 0; i < stVal.Len(); i++ {
 		item := stVal.Index(i)
-		err := callback(i, item)
+		err := callback(i, item.Interface())
 		if err != nil {
 			return err
 		}
