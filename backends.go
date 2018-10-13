@@ -53,6 +53,7 @@ type RepositoryDefinition interface {
 	GetReadCapacity() int64
 	GetWriteCapacity() int64
 	GetGSI() map[string]interface{}
+	IsCustomID() bool
 }
 
 // Backend defines interface for defining the repository
@@ -116,6 +117,16 @@ func (m RepositoryDefinitionMap) GetIndexes() []Index {
 	}
 
 	return indexes
+}
+
+// IsCustomID returns if the ID (property "id") has custom handling.
+// If customId is false, then the hadling of the ID is left to the
+// underlying backend.
+func (m RepositoryDefinitionMap) IsCustomID() bool {
+	if customID, ok := m["customId"]; ok {
+		return customID.(bool)
+	}
+	return false
 }
 
 // GetName returns the collection/table name

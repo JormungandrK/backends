@@ -28,7 +28,13 @@ func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 
 		for i := 0; i < rValue.NumField(); i++ {
 			f := rValue.Field(i)
+			tag := typeOfObject.Field(i).Tag
 			key := strings.ToLower(typeOfObject.Field(i).Name)
+			if bsonName, ok := tag.Lookup("bson"); ok {
+				key = bsonName
+			} else if jsonName, ok := tag.Lookup("json"); ok {
+				key = jsonName
+			}
 			value := f.Interface()
 			(*result)[key] = value
 		}

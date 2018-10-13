@@ -17,6 +17,7 @@ var MONGO_CTX_KEY = "MONGO_SESSION"
 // MongoCollection wraps a mgo.Collection to embed methods in models.
 type MongoCollection struct {
 	*mgo.Collection
+	repoDef RepositoryDefinition
 }
 
 // MongoDBRepoBuilder builds new mongo collection.
@@ -58,7 +59,8 @@ func MongoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposito
 	}
 
 	return &MongoCollection{
-		mongoColl,
+		Collection: mongoColl,
+		repoDef:    repoDef,
 	}, nil
 }
 
@@ -151,8 +153,10 @@ func (c *MongoCollection) GetOne(filter Filter, result interface{}) (interface{}
 
 	var record map[string]interface{}
 
-	if err := stringToObjectID(filter); err != nil {
-		return nil, err
+	if !c.repoDef.IsCustomID() {
+		if err := stringToObjectID(filter); err != nil {
+			return nil, err
+		}
 	}
 
 	err := c.Find(filter).One(&record)
@@ -162,8 +166,12 @@ func (c *MongoCollection) GetOne(filter Filter, result interface{}) (interface{}
 		}
 		return nil, err
 	}
+	if c.repoDef.IsCustomID() {
+		record["_id"] = record["_id"].(bson.ObjectId).Hex()
+	} else {
+		record["id"] = record["_id"].(bson.ObjectId).Hex()
+	}
 
-	record["id"] = record["_id"].(bson.ObjectId).Hex()
 	err = MapToInterface(&record, &result)
 	if err != nil {
 		return nil, err
@@ -181,8 +189,10 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 	slicePointer := reflect.New(results.Type())
 	slicePointer.Elem().Set(results)
 
-	if err := stringToObjectID(filter); err != nil {
-		return nil, ErrInvalidInput(err)
+	if !c.repoDef.IsCustomID() {
+		if err := stringToObjectID(filter); err != nil {
+			return nil, ErrInvalidInput(err)
+		}
 	}
 
 	query := c.Find(filter)
@@ -228,8 +238,15 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 				// ok,there is such value
 				if bsonID, ok := idValue.Interface().(bson.ObjectId); ok {
 					idStr := bsonID.Hex()
-					itemValue.SetMapIndex(reflect.ValueOf("id"), reflect.ValueOf(idStr))
-					itemValue.SetMapIndex(reflect.ValueOf("_id"), reflect.Value{})
+					if c.repoDef.IsCustomID() {
+						// we have a custom handling on property "id", so we'll map _id => HEX(_id)
+						itemValue.SetMapIndex(reflect.ValueOf("_id"), reflect.ValueOf(idStr))
+					} else {
+						// no custom mapping set, so the default behaviour is to map id => HEX(_id)
+						itemValue.SetMapIndex(reflect.ValueOf("id"), reflect.ValueOf(idStr))
+						itemValue.SetMapIndex(reflect.ValueOf("_id"), reflect.Value{})
+					}
+
 				}
 			}
 		}
@@ -254,7 +271,9 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 
 		id := bson.NewObjectId()
 		(*payload)["_id"] = id
-		delete(*payload, "id")
+		if !c.repoDef.IsCustomID() {
+			delete(*payload, "id")
+		}
 
 		err = c.Insert(payload)
 		if err != nil {
@@ -264,7 +283,9 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 			return nil, err
 		}
 
-		(*payload)["id"] = id.Hex()
+		if !c.repoDef.IsCustomID() {
+			(*payload)["id"] = id.Hex()
+		}
 		err = MapToInterface(payload, &object)
 		if err != nil {
 			return nil, err
@@ -273,8 +294,10 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 		return object, nil
 	}
 
-	if err := stringToObjectID(filter); err != nil {
-		return nil, ErrInvalidInput(err)
+	if !c.repoDef.IsCustomID() {
+		if err := stringToObjectID(filter); err != nil {
+			return nil, ErrInvalidInput(err)
+		}
 	}
 
 	err = c.Update(filter, bson.M{"$set": payload})
@@ -300,8 +323,10 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 // DeleteOne deletes only one record for given filter
 func (c *MongoCollection) DeleteOne(filter Filter) error {
 
-	if err := stringToObjectID(filter); err != nil {
-		return ErrInvalidInput(err)
+	if !c.repoDef.IsCustomID() {
+		if err := stringToObjectID(filter); err != nil {
+			return ErrInvalidInput(err)
+		}
 	}
 
 	err := c.Remove(filter)
@@ -318,8 +343,10 @@ func (c *MongoCollection) DeleteOne(filter Filter) error {
 // DeleteAll deletes all matched records for given filter
 func (c *MongoCollection) DeleteAll(filter Filter) error {
 
-	if err := stringToObjectID(filter); err != nil {
-		return ErrInvalidInput(err)
+	if !c.repoDef.IsCustomID() {
+		if err := stringToObjectID(filter); err != nil {
+			return ErrInvalidInput(err)
+		}
 	}
 
 	_, err := c.RemoveAll(filter)
