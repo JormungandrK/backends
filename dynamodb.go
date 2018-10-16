@@ -3,6 +3,7 @@ package backends
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"time"
@@ -64,7 +65,6 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 	db := dynamo.New(sessionAWS)
 	table := db.Table(tableName)
 
-	fmt.Println("Table created")
 	return &DynamoCollection{
 		&table,
 		repoDef,
@@ -73,6 +73,19 @@ func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Reposit
 
 // DynamoDBBackendBuilder returns RepositoriesBackend
 func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Backend, error) {
+
+	staticCredentials := dbInfo.AWSSecretKeyID != "" || dbInfo.AWSSecretAccessKey != "" || dbInfo.AWSSessionToken != ""
+
+	if staticCredentials {
+		if dbInfo.AWSSecretKeyID == "" {
+			return nil, ErrBackendError("AWSSecretKeyID missing")
+		}
+		if dbInfo.AWSSecretAccessKey == "" {
+			return nil, ErrBackendError("AWSSecretAccessKey missing")
+		}
+	} else if dbInfo.AWSCredentials == "" {
+		return nil, ErrBackendError("either AWSCredentials file or AWSSecretKeyID/AWSSecretAccessKey must be specified")
+	}
 
 	if dbInfo.AWSRegion == "" {
 		return nil, ErrBackendError("AWS region is missing from config")
@@ -84,16 +97,20 @@ func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Back
 
 	if dbInfo.AWSEndpoint != "" {
 		configAWS.Endpoint = aws.String(dbInfo.AWSEndpoint)
-		fmt.Println("With endpoint, no creds")
-	} else if dbInfo.AWSCredentials != "" {
-		configAWS.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
-	} else {
-		return nil, ErrBackendError("AWS credentials or endpoint must be specified in the config")
+		log.Println("Using AWS Endpoint: ", dbInfo.AWSEndpoint)
 	}
-	fmt.Println("***1")
+
+	if staticCredentials {
+		log.Println("Using static AWS Credentials.")
+		configAWS.Credentials = credentials.NewStaticCredentials(dbInfo.AWSSecretKeyID, dbInfo.AWSSecretAccessKey, dbInfo.AWSSessionToken)
+	}
+
+	if dbInfo.AWSCredentials != "" {
+		log.Println("Using Shared AWS Credentials from file.")
+		configAWS.Credentials = credentials.NewSharedCredentials(dbInfo.AWSCredentials, "")
+	}
 	sess, err := session.NewSession(configAWS)
 	if err != nil {
-		fmt.Printf("Create session didnt work")
 		return nil, err
 	}
 
@@ -106,7 +123,6 @@ func DynamoDBBackendBuilder(dbInfo *config.DBInfo, manager BackendManager) (Back
 
 // createTable creates table if it does not exist
 func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
-
 	result, err := svc.ListTables(&dynamodb.ListTablesInput{})
 	if err != nil {
 		return err
@@ -126,9 +142,13 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 	}
 
 	if hashKey != "" {
+		haskKeyType := repoDef.GetHashKeyType()
+		if haskKeyType == "" {
+			haskKeyType = "S"
+		}
 		attributes = append(attributes, &dynamodb.AttributeDefinition{
 			AttributeName: aws.String(hashKey),
-			AttributeType: aws.String("S"),
+			AttributeType: aws.String(haskKeyType),
 		})
 
 		keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
@@ -141,9 +161,13 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 	}
 
 	if rangeKey != "" {
+		rangeKeyType := repoDef.GetRangeKeyType()
+		if rangeKeyType == "" {
+			rangeKeyType = "S"
+		}
 		attributes = append(attributes, &dynamodb.AttributeDefinition{
 			AttributeName: aws.String(rangeKey),
-			AttributeType: aws.String("S"),
+			AttributeType: aws.String(rangeKeyType),
 		})
 
 		keySchemaElements = append(keySchemaElements, &dynamodb.KeySchemaElement{
@@ -203,7 +227,7 @@ func createTable(svc *dynamodb.DynamoDB, repoDef RepositoryDefinition) error {
 		return err
 	}
 
-	fmt.Printf("Table created: %v\n", cto)
+	log.Printf("Table created: %v\n", cto)
 
 	return nil
 }
@@ -281,7 +305,6 @@ func (c *DynamoCollection) GetOne(filter Filter, result interface{}) (interface{
 	if err != nil {
 		return nil, err
 	}
-
 	return result, nil
 }
 
@@ -292,7 +315,6 @@ func (c *DynamoCollection) GetAll(filter Filter, resultsTypeHint interface{}, or
 	resultHint := AsPtr(resultsTypeHint)
 
 	results = NewSliceOfType(resultHint)
-	fmt.Println("Results type: ", resultHint)
 
 	var query []string
 	var args []interface{}
@@ -352,13 +374,14 @@ func (c *DynamoCollection) Save(object interface{}, filter Filter) (interface{},
 
 	if filter == nil {
 		// Create item
+		if _, ok := (*payload)["id"]; !ok {
+			id, err := uuid.NewV4()
+			if err != nil {
+				return nil, err
+			}
 
-		id, err := uuid.NewV4()
-		if err != nil {
-			return nil, err
+			(*payload)["id"] = id.String()
 		}
-
-		(*payload)["id"] = id.String()
 
 		if c.RepositoryDefinition.EnableTTL() {
 			attribute := c.RepositoryDefinition.GetTTLAttribute()
@@ -455,49 +478,42 @@ func (c *DynamoCollection) DeleteOne(filter Filter) error {
 // DeleteAll deletes batch of items
 // Example filter:
 // filter := map[string]interface{}{
-// 			"email": []string{"keitaro-user1@keitaro.com", "keitaro-user1@keitaro.com"},
-// 			"id":    []string{"378d9777-6a32-4453-849e-858ff243635b", "462e5d47-b88c-4de7-9aaf-89f6c718dddc"},
+// 			"email": "keitaro-user1@keitaro.com",
+// 			"id":    "378d9777-6a32-4453-849e-858ff243635b",
 // 		}
 // email is the hash key, id is the range key
 func (c *DynamoCollection) DeleteAll(filter Filter) error {
-
 	hashKey := c.RepositoryDefinition.GetHashKey()
 	rangeKey := c.RepositoryDefinition.GetRangeKey()
-	hashAndRangeKeyName := []string{hashKey}
 
-	if rangeKey != "" {
-		hashAndRangeKeyName = append(hashAndRangeKeyName, rangeKey)
+	if _, ok := filter[hashKey]; !ok {
+		return ErrInvalidInput("range hash key must be provided")
 	}
 
-	hashValues, ok := filter[hashKey].([]string)
-	if !ok {
-		return ErrBackendError("hash key not specified in the filter")
-	}
+	batchSize := 128
+	offset := 0
 
-	rangeValues := []string{}
-	if rangeKey != "" {
-		rangeValues, ok = filter[rangeKey].([]string)
-		if !ok {
-			return ErrBackendError("range key not specified in the filter")
+	for {
+		resultsIntf, err := c.GetAll(filter, &map[string]interface{}{}, hashKey, "ascending", batchSize, offset)
+		if err != nil {
+			return err
+		}
+		results := resultsIntf.([]*map[string]interface{})
+
+		if len(results) == 0 {
+			break
 		}
 
-		if len(hashValues) != len(rangeValues) {
-			return ErrBackendError("length of the values for hash and range key in the filter must be equal")
+		for _, result := range results {
+			delFilter := NewFilter().Match(hashKey, (*result)[hashKey])
+			if rangeKey != "" {
+				delFilter = delFilter.Match(rangeKey, (*result)[rangeKey])
+			}
+			if err = c.DeleteOne(delFilter); err != nil {
+				return err
+			}
 		}
-	}
-
-	var keys []dynamo.Keyed
-	for index, _ := range hashValues {
-		if len(rangeValues) > 0 {
-			keys = append(keys, dynamo.Keys{hashValues[index], rangeValues[index]})
-		} else {
-			keys = append(keys, dynamo.Keys{hashValues[index]})
-		}
-	}
-
-	_, err := c.Table.Batch(hashAndRangeKeyName...).Write().Delete(keys...).Run()
-	if err != nil {
-		return err
+		offset += len(results)
 	}
 
 	return nil

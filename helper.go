@@ -132,9 +132,7 @@ func contains(s []*string, item string) bool {
 func CreateNewAsExample(example interface{}) (interface{}, error) {
 	exampleType := reflect.TypeOf(example)
 	if exampleType.Kind() == reflect.Ptr {
-		fmt.Println("Already a ptr")
 		exampleType = exampleType.Elem()
-		fmt.Println("    => but now: ", exampleType.Kind())
 	}
 
 	value, err := createNewFromType(exampleType)
