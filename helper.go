@@ -35,6 +35,9 @@ func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 			} else if jsonName, ok := tag.Lookup("json"); ok {
 				key = jsonName
 			}
+			if strings.Contains(key, ",") {
+				key = key[0:strings.Index(key, ",")]
+			}
 			value := f.Interface()
 			(*result)[key] = value
 		}

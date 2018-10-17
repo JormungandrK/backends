@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"log"
 	"reflect"
 	"time"
 
@@ -118,7 +119,11 @@ func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []I
 
 		// Create indexes
 		if err := collection.EnsureIndex(index); err != nil {
-			return nil, err
+			if mgo.IsDup(err) {
+				log.Println("WARN: The index already exists and will not be updated. MongoDB error: ", err.Error())
+			} else {
+				return nil, err
+			}
 		}
 	}
 
