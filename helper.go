@@ -28,7 +28,16 @@ func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 
 		for i := 0; i < rValue.NumField(); i++ {
 			f := rValue.Field(i)
+			tag := typeOfObject.Field(i).Tag
 			key := strings.ToLower(typeOfObject.Field(i).Name)
+			if bsonName, ok := tag.Lookup("bson"); ok {
+				key = bsonName
+			} else if jsonName, ok := tag.Lookup("json"); ok {
+				key = jsonName
+			}
+			if strings.Contains(key, ",") {
+				key = key[0:strings.Index(key, ",")]
+			}
 			value := f.Interface()
 			(*result)[key] = value
 		}
@@ -126,9 +135,7 @@ func contains(s []*string, item string) bool {
 func CreateNewAsExample(example interface{}) (interface{}, error) {
 	exampleType := reflect.TypeOf(example)
 	if exampleType.Kind() == reflect.Ptr {
-		fmt.Println("Already a ptr")
 		exampleType = exampleType.Elem()
-		fmt.Println("    => but now: ", exampleType.Kind())
 	}
 
 	value, err := createNewFromType(exampleType)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -50,9 +51,12 @@ type RepositoryDefinition interface {
 	GetTTLAttribute() string
 	GetHashKey() string
 	GetRangeKey() string
+	GetHashKeyType() string
+	GetRangeKeyType() string
 	GetReadCapacity() int64
 	GetWriteCapacity() int64
 	GetGSI() map[string]interface{}
+	IsCustomID() bool
 }
 
 // Backend defines interface for defining the repository
@@ -118,6 +122,16 @@ func (m RepositoryDefinitionMap) GetIndexes() []Index {
 	return indexes
 }
 
+// IsCustomID returns if the ID (property "id") has custom handling.
+// If customId is false, then the hadling of the ID is left to the
+// underlying backend.
+func (m RepositoryDefinitionMap) IsCustomID() bool {
+	if customID, ok := m["customId"]; ok {
+		return customID.(bool)
+	}
+	return false
+}
+
 // GetName returns the collection/table name
 func (m RepositoryDefinitionMap) GetName() string {
 	if name, ok := m["name"]; ok {
@@ -175,7 +189,7 @@ func (m RepositoryDefinitionMap) GetRangeKey() string {
 // GetReadCapacity return the read capacity for dynamoDB table
 func (m RepositoryDefinitionMap) GetReadCapacity() int64 {
 	if readCapacity, ok := m["readCapacity"]; ok {
-		return readCapacity.(int64)
+		return asInt64(readCapacity)
 	}
 
 	return 0
@@ -184,7 +198,7 @@ func (m RepositoryDefinitionMap) GetReadCapacity() int64 {
 // GetWriteCapacity return the write capacity for dynamoDB table
 func (m RepositoryDefinitionMap) GetWriteCapacity() int64 {
 	if writeCapacity, ok := m["writeCapacity"]; ok {
-		return writeCapacity.(int64)
+		return asInt64(writeCapacity)
 	}
 
 	return 0
@@ -197,6 +211,22 @@ func (m RepositoryDefinitionMap) GetGSI() map[string]interface{} {
 	}
 
 	return nil
+}
+
+// GetHashKeyType return the type of the hash key - AWS DynamoDB specific. Type may be "S", "N", "SS", "SN".
+func (m RepositoryDefinitionMap) GetHashKeyType() string {
+	if hashKeyType, ok := m["hashKeyType"]; ok {
+		return hashKeyType.(string)
+	}
+	return ""
+}
+
+// GetRangeKeyType return the type of the range key - AWS DynamoDB specific. Type may be "S", "N", "SS", "SN".
+func (m RepositoryDefinitionMap) GetRangeKeyType() string {
+	if rangeKeyType, ok := m["rangeKeyType"]; ok {
+		return rangeKeyType.(string)
+	}
+	return ""
 }
 
 // DefineRepository defines the repository (collection/table)
@@ -376,4 +406,21 @@ func NewUniqueIndex(fields ...string) Index {
 
 func NewNonUniqueIndex(fields ...string) Index {
 	return NewIndex(indexNameFromFields(fields...), false, fields...)
+}
+
+func asInt64(v interface{}) int64 {
+	if i, ok := v.(int64); ok {
+		return i
+	}
+	if i, ok := v.(int); ok {
+		return int64(i)
+	}
+	if i, ok := v.(string); ok {
+		i64, err := strconv.ParseInt(i, 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		return i64
+	}
+	panic(fmt.Errorf("%v cannot be transformed to int64", v))
 }
