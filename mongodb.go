@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"reflect"
 	"time"
@@ -119,9 +120,14 @@ func PrepareDB(session *mgo.Session, db string, dbCollection string, indexes []I
 
 		// Create indexes
 		if err := collection.EnsureIndex(index); err != nil {
-			if mgo.IsDup(err) {
-				log.Println("WARN: The index already exists and will not be updated. MongoDB error: ", err.Error())
+			if qe, ok := err.(*mgo.QueryError); ok {
+				if qe.Code == 85 {
+					// IndexOptionsConflict - see here https://github.com/mongodb/mongo/blob/master/src/mongo/base/error_codes.err
+					// It means that there is already defined index and we try to redefine it, which is (mostly) fine.
+					log.Println("WARN: The index already exists and will not be updated. MongoDB error: ", err.Error())
+				}
 			} else {
+				log.Println("ERROR: while creating index. of type: ", reflect.TypeOf(err), " and values: ", fmt.Sprintf("%v", err))
 				return nil, err
 			}
 		}
@@ -305,6 +311,11 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 		}
 	}
 
+	if _, ok := (*payload)["_id"]; ok {
+		// we can't update MongoDB's own id - it is immutable.
+		delete(*payload, "_id")
+	}
+
 	err = c.Update(filter, bson.M{"$set": payload})
 	if err != nil {
 		if err == mgo.ErrNotFound {
@@ -317,7 +328,7 @@ func (c *MongoCollection) Save(object interface{}, filter Filter) (interface{}, 
 		return nil, err
 	}
 
-	_, err = c.GetOne(filter, &result)
+	result, err = c.GetOne(filter, object)
 	if err != nil {
 		return nil, err
 	}
