@@ -22,6 +22,13 @@ func (f Filter) Match(property string, value interface{}) Filter {
 	return f
 }
 
+func (f Filter) MatchPattern(property, value string) Filter {
+	f[property] = map[string]string{
+		"$pattern": value,
+	}
+	return f
+}
+
 func (f Filter) Set(property string, value interface{}) Filter {
 	f[property] = value
 	return f
