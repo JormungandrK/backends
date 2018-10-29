@@ -57,10 +57,10 @@ func TestMongoDBIntergration(t *testing.T) {
 
 	bm := NewBackendSupport(map[string]*config.DBInfo{
 		"mongodb": &config.DBInfo{
-			DatabaseName: "users",
+			DatabaseName: "testdb",
 			Host:         "localhost:27017",
-			Username:     "restapi",
-			Password:     "restapi",
+			Username:     "testuser",
+			Password:     "testpass",
 		},
 	})
 
