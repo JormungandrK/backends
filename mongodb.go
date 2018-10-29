@@ -206,7 +206,12 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 		}
 	}
 
-	query := c.Find(filter)
+	mongoFilter, err := toMongoFilter(filter)
+	if err != nil {
+		return nil, ErrInvalidInput(err)
+	}
+
+	query := c.Find(mongoFilter)
 	if order != "" {
 		if sorting == "desc" {
 			order = "-" + order
@@ -220,7 +225,7 @@ func (c *MongoCollection) GetAll(filter Filter, resultsTypeHint interface{}, ord
 		query = query.Limit(limit)
 	}
 
-	err := query.All(slicePointer.Interface())
+	err = query.All(slicePointer.Interface())
 	if err != nil {
 		if err == mgo.ErrNotFound {
 			return nil, ErrNotFound(err)
@@ -374,4 +379,56 @@ func (c *MongoCollection) DeleteAll(filter Filter) error {
 	}
 
 	return nil
+}
+
+func toMongoFilter(filter Filter) (map[string]interface{}, error) {
+	mgf := map[string]interface{}{}
+
+	for key, value := range filter {
+		if specs, ok := value.(map[string]interface{}); ok {
+			if pattern, ok := specs["$pattern"]; ok {
+				mongoPattern := toMongoPattern(pattern.(string))
+				mgf[key] = bson.M{
+					"$regex": mongoPattern,
+				}
+				continue
+			}
+			return nil, fmt.Errorf("unknown filter specification - supported type is $pattern")
+		}
+		mgf[key] = value // copy over the key=>value pairs to do exact matching
+	}
+
+	return mgf, nil
+}
+
+func toMongoPattern(pattern string) string {
+	mongoPattern := ""
+
+	prev := '\000'
+
+	for _, r := range pattern {
+		if r == '%' {
+			if prev == '%' {
+				mongoPattern += "%"
+				prev = '\000'
+				continue
+			}
+			prev = r
+			continue
+		}
+		if prev == '%' {
+			mongoPattern += ".*"
+		}
+		if r != '\000' {
+			mongoPattern += string(r)
+		}
+
+		prev = r
+	}
+	if prev == '%' {
+		// at the very end of the pattern
+		mongoPattern += ".*"
+	}
+
+	return mongoPattern
 }

@@ -11,17 +11,40 @@ import (
 	"github.com/Microkubes/microservice-tools/config"
 )
 
+// Filter is a map property => value/pattern to match the DB entries against.
 type Filter map[string]interface{}
 
+// NewFilter is a builder method to create new filter.
+// All filter methods are chained, so you can convinientry do somethind like this:
+// 		filter := backends.NewFilter().MatchPattern("name", "John%").Match("role", "user")
 func NewFilter() Filter {
 	return Filter{}
 }
 
+// Match sets an exact match for a given property.
+// For example:
+// 		filter := backends.NewFilter().Match("id", "0001")
+// would match the entry with ID equals to "0001".
 func (f Filter) Match(property string, value interface{}) Filter {
 	f[property] = value
 	return f
 }
 
+// MatchPattern sets a pattern match for the given property.
+// The match works similar to how 'LIKE' pattern matching works
+// in SQL:
+// "%a" matches "ba", "tada" but not "ab"
+// "a%" matches "ab" but not "ba"
+// "%ab%" matches anything that contains "ab"
+// "ab" does an exact match to "ab"
+func (f Filter) MatchPattern(property, value string) Filter {
+	f[property] = map[string]string{
+		"$pattern": value,
+	}
+	return f
+}
+
+// Set is an alias for Filter.Match - do an exact match on the given property.
 func (f Filter) Set(property string, value interface{}) Filter {
 	f[property] = value
 	return f
