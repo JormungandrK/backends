@@ -388,7 +388,9 @@ func toMongoFilter(filter Filter) (map[string]interface{}, error) {
 		if specs, ok := value.(map[string]interface{}); ok {
 			if pattern, ok := specs["$pattern"]; ok {
 				mongoPattern := toMongoPattern(pattern.(string))
-				mgf[key] = mongoPattern
+				mgf[key] = bson.M{
+					"$regex": mongoPattern,
+				}
 				continue
 			}
 			return nil, fmt.Errorf("unknown filter specification - supported type is $pattern")

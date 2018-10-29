@@ -27,6 +27,11 @@ type DynamoCollection struct {
 	RepositoryDefinition
 }
 
+type patternCondition struct {
+	condition string
+	value     string
+}
+
 // DynamoDBRepoBuilder builds new dynamo table.
 // If it does not exist builder will create it
 func DynamoDBRepoBuilder(repoDef RepositoryDefinition, backend Backend) (Repository, error) {
@@ -319,6 +324,16 @@ func (c *DynamoCollection) GetAll(filter Filter, resultsTypeHint interface{}, or
 	var query []string
 	var args []interface{}
 	for k, v := range filter {
+		if specs, ok := v.(map[string]interface{}); ok {
+			if pattern, ok := specs["$pattern"]; ok {
+				for _, cond := range patternToDynamodbCondition(pattern.(string)) {
+					query = append(query, fmt.Sprintf("$ %s ?", cond.condition))
+					args = append(args, k)
+					args = append(args, cond.value)
+				}
+			}
+			continue
+		}
 		query = append(query, "$ = ?")
 		args = append(args, k)
 		args = append(args, v)
@@ -517,4 +532,95 @@ func (c *DynamoCollection) DeleteAll(filter Filter) error {
 	}
 
 	return nil
+}
+
+func patternToDynamodbCondition(pattern string) []*patternCondition {
+	conditions := []*patternCondition{}
+
+	startsWith := true
+	endsWith := true
+
+	if strings.HasPrefix(pattern, "%") && !strings.HasPrefix(pattern, "%%") {
+		startsWith = false
+	}
+
+	c := 0
+	for i := len(pattern) - 1; i >= 0; i-- {
+		if pattern[i] != '%' {
+			break
+		}
+		c++
+	}
+	if c%2 == 1 {
+		endsWith = false
+	}
+
+	tokens := tokenize(pattern)
+
+	for i, token := range tokens {
+		cond := "CONTAINS"
+		if i == 0 {
+			if len(tokens) == 1 && startsWith && endsWith {
+				cond = "EQ"
+			} else if startsWith && !endsWith {
+				cond = "BEGINS_WITH"
+			}
+
+		}
+		conditions = append(conditions, &patternCondition{
+			condition: cond,
+			value:     token,
+		})
+	}
+
+	return conditions
+}
+
+func tokenize(str string) (tokens []string) {
+	tokens = []string{}
+	prev := '\000'
+	token := ""
+
+	for i, c := range str {
+		if c == '%' {
+			if prev == '%' { // look behind
+				token += string("%")
+				prev = '\000'
+				continue
+			}
+
+			if i+1 < len(str) { // look ahead
+				if str[i+1] == '%' {
+					prev = c
+					continue
+				}
+			}
+			if prev == '\000' { // trivial - first char
+				prev = c
+				continue
+			}
+			tokens = append(tokens, token)
+			token = ""
+			prev = c
+			continue
+		}
+		token += string(c)
+		prev = c
+	}
+	if token != "" {
+		tokens = append(tokens, token)
+	}
+
+	return tokens
+}
+
+func (p *patternCondition) Equals(other *patternCondition) bool {
+	if p == nil && other == nil {
+		return true
+	}
+	if p == nil || other == nil {
+		return false
+	}
+
+	return p.condition == other.condition && p.value == other.value
 }
