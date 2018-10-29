@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/Microkubes/microservice-tools/config"
@@ -383,11 +384,10 @@ func (c *MongoCollection) DeleteAll(filter Filter) error {
 
 func toMongoFilter(filter Filter) (map[string]interface{}, error) {
 	mgf := map[string]interface{}{}
-
 	for key, value := range filter {
-		if specs, ok := value.(map[string]interface{}); ok {
+		if specs, ok := value.(map[string]string); ok {
 			if pattern, ok := specs["$pattern"]; ok {
-				mongoPattern := toMongoPattern(pattern.(string))
+				mongoPattern := toMongoPattern(pattern)
 				mgf[key] = bson.M{
 					"$regex": mongoPattern,
 				}
@@ -397,7 +397,6 @@ func toMongoFilter(filter Filter) (map[string]interface{}, error) {
 		}
 		mgf[key] = value // copy over the key=>value pairs to do exact matching
 	}
-
 	return mgf, nil
 }
 
@@ -430,5 +429,11 @@ func toMongoPattern(pattern string) string {
 		mongoPattern += ".*"
 	}
 
+	if !strings.HasPrefix(mongoPattern, ".*") {
+		mongoPattern = "^" + mongoPattern
+	}
+	if !strings.HasSuffix(mongoPattern, ".*") {
+		mongoPattern = mongoPattern + "$"
+	}
 	return mongoPattern
 }
