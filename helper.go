@@ -2,7 +2,6 @@ package backends
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"strings"
 
@@ -14,7 +13,7 @@ import (
 // InterfaceToMap converts interface type (struct or map pointer) to *map[string]interface{}
 func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 	if reflect.ValueOf(object).Kind() != reflect.Ptr {
-		return nil, fmt.Errorf("object should be of pointer type")
+		return nil, ErrInvalidInput("object should be of pointer type")
 	}
 
 	result := &map[string]interface{}{}
@@ -46,11 +45,11 @@ func InterfaceToMap(object interface{}) (*map[string]interface{}, error) {
 		if _, ok := object.(*map[string]interface{}); ok {
 			result = object.(*map[string]interface{})
 		} else {
-			return nil, fmt.Errorf("invalid map type, should be *map[string]interface{}")
+			return nil, ErrInvalidInput("invalid map type, should be *map[string]interface{}")
 		}
 	default:
 
-		return nil, fmt.Errorf("invalid object type, it should be struct pointer or *map[string]interface{}")
+		return nil, ErrInvalidInput("invalid object type, it should be struct pointer or *map[string]interface{}")
 	}
 
 	return result, nil
@@ -82,7 +81,7 @@ func IterateOverSlice(slice interface{}, callback func(i int, item interface{}) 
 		stVal = stVal.Elem()
 	}
 	if stVal.Kind() != reflect.Slice {
-		return fmt.Errorf("not slice")
+		return ErrInvalidInput("not slice")
 	}
 
 	for i := 0; i < stVal.Len(); i++ {
@@ -101,7 +100,7 @@ func stringToObjectID(object map[string]interface{}) error {
 	if id, ok := object["id"]; ok {
 		delete(object, "id")
 		if !bson.IsObjectIdHex(id.(string)) {
-			return fmt.Errorf("id is a invalid hex representation of an ObjectId")
+			return ErrInvalidInput("id is a invalid hex representation of an ObjectId")
 		}
 
 		if reflect.TypeOf(id).String() != "bson.ObjectId" {
@@ -184,7 +183,7 @@ func NewSliceOfType(elementTypeHint interface{}) reflect.Value {
 
 func valueOrError(val reflect.Value) (reflect.Value, error) {
 	if !val.IsValid() {
-		return val, fmt.Errorf("invalid value")
+		return val, ErrInvalidInput("invalid value")
 	}
 	return val, nil
 }
